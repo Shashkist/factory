@@ -302,15 +302,23 @@ def _glob_matches(root: Path, pattern: str) -> bool | None:
         return None
 
 
-def _walk(data: Any, path: str, dupes: dict[int, list[str]]) -> Iterator[Problem]:
+def _walk(
+    data: Any, path: str, dupes: dict[int, list[str]], seen: set[int] | None = None
+) -> Iterator[Problem]:
+    # Each container is visited once: YAML aliases share containers, and following every
+    # alias path grows exponentially ("billion laughs").
+    seen = set() if seen is None else seen
+    if not isinstance(data, (dict, list)) or id(data) in seen:
+        return
+    seen.add(id(data))
     if isinstance(data, dict):
         for key in dupes.get(id(data), []):
             yield Problem(_join(path, key), "duplicate key")
         for k, v in data.items():
-            yield from _walk(v, _join(path, str(k)), dupes)
-    elif isinstance(data, list):
+            yield from _walk(v, _join(path, str(k)), dupes, seen)
+    else:
         for i, v in enumerate(data):
-            yield from _walk(v, _join(path, i), dupes)
+            yield from _walk(v, _join(path, i), dupes, seen)
 
 
 def load_profile(

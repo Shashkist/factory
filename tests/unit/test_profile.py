@@ -79,3 +79,19 @@ def test_main_returns_codes(tmp_path: Path, capsys: object) -> None:
     f.write_text('methodology: "1"\n', encoding="utf-8")
     assert main(["profile", "check", str(f)]) == 0
     assert main(["profile", "check", str(tmp_path / "none.yaml")]) == 2
+
+
+def test_alias_bomb_loads_quickly(tmp_path: Path) -> None:
+    import time
+
+    lines = ["methodology: '0.1'", "bogus:", "  a: &a [x, x, x, x, x, x, x, x, x, x]"]
+    prev = "a"
+    for name in "bcdefgh":
+        lines.append(f"  {name}: &{name} [" + ", ".join([f"*{prev}"] * 10) + "]")
+        prev = name
+    f = tmp_path / "factory.yaml"
+    f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    start = time.monotonic()
+    _, problems = load_profile(f)
+    assert time.monotonic() - start < 5
+    assert any(p.path == "bogus" for p in problems)
