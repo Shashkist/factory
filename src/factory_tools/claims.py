@@ -73,7 +73,7 @@ def _run(args: list[str]) -> str:
     return proc.stdout
 
 
-#: The repository a bare `gh` call reaches from this checkout. It never gets `-R`.
+#: LF's own repository. Only a name for callers and tests; never a fallback.
 HERE_REPO = "Shashkist/Learning_factory"
 
 #: Which repositories the factory works on; override with LF_REPOS_FILE.
@@ -87,22 +87,12 @@ def _unquote(value: str) -> str:
     return value
 
 
-def read_repos(
-    path: Path | None = None, here: str = HERE_REPO
-) -> tuple[list[str], str, dict[str, str]]:
-    """(repositories, default, clone path per repository) from repos.yaml.
-
-    This repository alone, with one warning line on stderr, when the file is
-    missing, empty or not readable. The default is always this repository
-    (here): a bare `gh` call reaches whatever the checkout points at, so
-    no file can move the default elsewhere. If the file marks another entry
-    default, or lists no entry for this repository, one warning says so and
-    this repository is used as the default (and read).
+def _parse_repos_file(path: Path) -> list[dict[str, str]]:
+    """The entries of a repos.yaml; raises OSError or ValueError when unusable.
 
     A tiny parser for the flat list format (`- repo: x` then `  key: value`):
     the tooling job runs with no dependencies, so no PyYAML here.
     """
-    path = path or Path(os.environ.get("LF_REPOS_FILE") or REPOS_FILE)
     entries: list[dict[str, str]] = []
     try:
         for raw in path.read_text(encoding="utf-8-sig").splitlines():
@@ -122,15 +112,39 @@ def read_repos(
         entries = list(unique.values())
         if not entries or any(e["repo"].count("/") != 1 for e in entries):
             raise ValueError("no repositories")
-    except (OSError, ValueError, KeyError):
+    except KeyError as exc:
+        raise ValueError("entry without repo") from exc
+    return entries
+
+
+def read_repos(
+    path: Path | None = None, here: str = HERE_REPO
+) -> tuple[list[str], str, dict[str, str]]:
+    """(repositories, default, clone path per repository) from repos.yaml.
+
+    `here` is the repository this checkout's `gh` reaches, or "" outside one
+    (resolve_scope always passes it; the default is only for direct callers).
+    With a `here`: this repository alone, with one warning line on stderr, when
+    the file is missing, empty or not readable; the default is always `here`
+    (no file can move it elsewhere); if the file marks another entry default,
+    or lists no entry for it, one warning says so and `here` is used as the
+    default (and read). Without a `here` nothing is inserted: the file's
+    entries are all there is, and none when the file is unusable.
+    """
+    path = path or Path(os.environ.get("LF_REPOS_FILE") or REPOS_FILE)
+    try:
+        entries = _parse_repos_file(path)
+    except (OSError, ValueError):
         print(
-            "warning: " + str(path) + " (repos.yaml) is missing or unreadable;"
-            " using " + here + " only",
+            "warning: " + str(path) + " (repos.yaml) is missing or unreadable"
+            + ("; using " + here + " only" if here else ""),
             file=sys.stderr,
         )
-        return [here], here, {}
+        return ([here] if here else []), here, {}
     repos = [here if e["repo"].lower() == here.lower() else e["repo"] for e in entries]
     clones = {r: e["clone"] for r, e in zip(repos, entries, strict=True) if e.get("clone")}
+    if not here:
+        return repos, "", clones
     marked = [
         r
         for r, e in zip(repos, entries, strict=True)
@@ -523,7 +537,7 @@ def _claimed_issues(
     """Claim rows of every repository read. `failed` collects the repositories
     that could not be read (each also printed once, as skipped)."""
     out: list[Row] = []
-    default = getattr(args, "default_repo", HERE_REPO)
+    default = getattr(args, "default_repo", "")
     only = _named(args)
     for repo in only or getattr(args, "repos", None) or [default]:
         # The default repository is reached with bare calls, as always.
@@ -549,29 +563,48 @@ def _claimed_issues(
 def claimed(repos: list[str], run: Run = _run, failed: list[str] | None = None) -> list[Row]:
     """Claim rows (with `repo` and `number`) of the given repositories; `failed`
     collects the ones that could not be read."""
-    args = argparse.Namespace(repos=repos, default_repo=HERE_REPO, repo=None)
+    args = argparse.Namespace(repos=repos, default_repo=origin_repo() or "", repo=None)
     return _claimed_issues(run, args, failed)
 
 
 def _named(args: Any) -> list[str]:
-    """The repositories named with --repo (one string or several), as a list."""
+    """The repositories named with --repo (one string or several), as a list,
+    repeats dropped (case-insensitively) and order kept."""
     repo = getattr(args, "repo", None)
     if not repo:
         return []
-    return [repo] if isinstance(repo, str) else list(repo)
+    out: list[str] = []
+    for r in [repo] if isinstance(repo, str) else list(repo):
+        if r.lower() not in (o.lower() for o in out):
+            out.append(r)
+    return out
 
 
 def _default_unreadable(args: Any, failed: list[str]) -> bool:
     """The repositories the caller depends on could not be read: every one named
-    with --repo (the one, when a single is named), else this repository."""
+    with --repo, else this repository's, else (no default) every one listed."""
     named = _named(args)
     if named:
         return all(r in failed for r in named)
-    return bool(getattr(args, "default_repo", HERE_REPO) in failed)
+    default = getattr(args, "default_repo", "")
+    if default:
+        return default in failed
+    return bool(failed) and all(r in failed for r in getattr(args, "repos", None) or [])
 
 
 def origin_repo() -> str | None:
-    """owner/name of this checkout's `origin`, or None when there is none."""
+    """owner/name of the repository `gh` targets from here, or None.
+
+    Asks `gh repo view`, so it agrees with every bare call; falls back to the
+    `origin` remote when gh cannot say.
+    """
+    try:
+        data = json.loads(_run(["repo", "view", "--json", "nameWithOwner"]))
+        name = data["nameWithOwner"]
+        if isinstance(name, str) and name.count("/") == 1:
+            return name
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+        pass
     try:
         proc = subprocess.run(
             ["git", "remote", "get-url", "origin"], capture_output=True, text=True
@@ -585,17 +618,33 @@ def origin_repo() -> str | None:
 def resolve_scope(args: Any) -> None:
     """Fill in repos, default_repo and clones for status and stale.
 
-    The default repository is this checkout's origin, reached with bare `gh`
-    calls. Without an origin there is no default and every repository is named
-    with -R. The list file is read unless --repo names the repositories.
+    The default repository is the one `gh` targets from here (bare calls).
+    Outside a repository there is no default and every repository is named
+    with -R: from --repo, else from the list file. With --repo the default list
+    file is still read, silently, for clone paths only.
     """
     here = origin_repo()
     args.default_repo = here or ""
     path = getattr(args, "repos_file", None)
-    if _named(args) and not path and not os.environ.get("LF_REPOS_FILE"):
+    if _named(args):
         args.repos, args.clones = [], {}
+        file = Path(path or os.environ.get("LF_REPOS_FILE") or REPOS_FILE)
+        try:
+            args.clones = {
+                e["repo"]: e["clone"] for e in _parse_repos_file(file) if e.get("clone")
+            }
+        except (OSError, ValueError):
+            pass
         return
-    args.repos, _, args.clones = read_repos(Path(path) if path else None, here or HERE_REPO)
+    args.repos, _, args.clones = read_repos(Path(path) if path else None, here or "")
+
+
+def _no_scope(args: Any) -> bool:
+    """No repository to read at all; says so, and the caller exits 1."""
+    if _named(args) or getattr(args, "repos", None) or getattr(args, "default_repo", ""):
+        return False
+    print("no repository here and no list file: pass --repo owner/name", file=sys.stderr)
+    return True
 
 
 class RepoAction(argparse.Action):
@@ -621,6 +670,8 @@ def cmd_status(args: Any, run: Run = _run) -> int:
     failed: list[str] = []
     if not hasattr(args, "default_repo"):
         resolve_scope(args)
+    if _no_scope(args):
+        return 1
     rows = _claimed_issues(run, args, failed)
     if _default_unreadable(args, failed):
         # Silence here would read as "nothing is claimed" and invite a double claim.
@@ -680,6 +731,8 @@ def cmd_stale(args: Any, run: Run = _run) -> int:
     failed: list[str] = []
     if not hasattr(args, "default_repo"):
         resolve_scope(args)
+    if _no_scope(args):
+        return 1
     claimed = _claimed_issues(run, args, failed)
     if _default_unreadable(args, failed):
         return 1
@@ -689,7 +742,7 @@ def cmd_stale(args: Any, run: Run = _run) -> int:
         return 0
     for r in rows:
         c = r["claim"]
-        other = r["repo"] != getattr(args, "default_repo", HERE_REPO)
+        other = r["repo"] != getattr(args, "default_repo", "")
         clone = getattr(args, "clones", {}).get(r["repo"])
         git = "git -C '" + clone.replace("\\", "/") + "' " if other and clone else "git "
         common = (

@@ -146,6 +146,7 @@ def test_origin_repo_parses_remote_urls(
         returncode = 0
         stdout = url + "\n"
 
+    monkeypatch.setattr(claims, "_run", lambda argv: (_ for _ in ()).throw(RuntimeError("no")))
     monkeypatch.setattr(claims.subprocess, "run", lambda *a, **k: Proc())
     assert claims.origin_repo() == A
 
@@ -155,8 +156,83 @@ def test_origin_repo_is_none_without_a_remote(monkeypatch: pytest.MonkeyPatch) -
         returncode = 2
         stdout = ""
 
+    monkeypatch.setattr(claims, "_run", lambda argv: (_ for _ in ()).throw(RuntimeError("no")))
     monkeypatch.setattr(claims.subprocess, "run", lambda *a, **k: Proc())
     assert claims.origin_repo() is None
+
+
+def test_origin_repo_is_what_gh_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(claims, "_run", lambda argv: json.dumps({"nameWithOwner": C}))
+    assert claims.origin_repo() == C
+
+
+def test_all_unreadable_without_a_default_exits_one() -> None:
+    args = Namespace(json=True, repo=None, default_repo="", repos=[A, C], clones={})
+    assert claims.cmd_status(args, Gh(broken=(A, C))) == 1
+    args = Namespace(older_than=0.0, repo=None, default_repo="", repos=[A, C], clones={})
+    assert claims.cmd_stale(args, Gh(broken=(A, C))) == 1
+
+
+def test_one_readable_without_a_default_exits_zero() -> None:
+    args = Namespace(json=True, repo=None, default_repo="", repos=[A, C], clones={})
+    assert claims.cmd_status(args, Gh(broken=(C,))) == 0
+
+
+def test_no_repository_and_no_file_exits_one_and_says_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LF_REPOS_FILE", raising=False)
+    monkeypatch.setattr(claims, "origin_repo", lambda: None)
+    assert claims.cmd_status(Namespace(json=True, repo=None, repos_file=None), Gh()) == 1
+    assert "--repo" in capsys.readouterr().err
+
+
+def test_no_origin_uses_only_the_file_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("LF_REPOS_FILE", raising=False)
+    monkeypatch.setattr(claims, "origin_repo", lambda: None)
+    listing = tmp_path / "repos.yaml"
+    listing.write_text("- repo: " + C + "\n", encoding="utf-8")
+    args = Namespace(repo=None, repos_file=str(listing))
+    claims.resolve_scope(args)
+    assert args.repos == [C] and args.default_repo == ""
+    assert capsys.readouterr().err == ""
+
+
+def test_claimed_uses_the_current_repository_as_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(claims, "origin_repo", lambda: A)
+    gh = Gh()
+    rows = claims.claimed([A], gh)
+    assert [r["repo"] for r in rows] == [A]
+    assert all("-R" not in c for c in gh.calls)
+
+
+def test_repo_with_the_default_file_reads_clones_silently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LF_REPOS_FILE", raising=False)
+    monkeypatch.setattr(claims, "origin_repo", lambda: None)
+    (tmp_path / "docs" / "factory").mkdir(parents=True)
+    (tmp_path / "docs" / "factory" / "repos.yaml").write_text(
+        "- repo: " + A + "\n  clone: C:\\a\n- repo: " + C + "\n", encoding="utf-8"
+    )
+    args = Namespace(repo=A, repos_file=None)
+    claims.resolve_scope(args)
+    assert args.repos == [] and args.clones == {A: "C:\\a"}
+    assert capsys.readouterr().err == ""
+
+
+def test_repeated_repo_values_are_dropped_case_insensitively(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = Namespace(json=True, repo=[A, A.lower(), C, A], default_repo="", repos=[], clones={})
+    assert claims.cmd_status(args, Gh()) == 0
+    assert [r["repo"] for r in json.loads(capsys.readouterr().out)] == [A, C]
 
 
 def test_take_over_line_uses_the_factory_tools_command(
