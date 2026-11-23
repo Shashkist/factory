@@ -217,12 +217,15 @@ def test_command_line_resolves_scope_but_direct_call_does_not(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: list[int] = []
+    scoped: list[str] = []
     monkeypatch.setattr(claims, "origin_repo", lambda run=None: seen.append(1) or A)
-    monkeypatch.setattr(claims, "_run", Gh())
     assert claims.cmd_status(Namespace(json=True, repo=None), Gh()) == 0
     assert seen == []
+    # The command line wraps the command found at parse time; a stub keeps the real gh out
+    # (cmd_status's own default runner is bound at definition time, so patching _run is not enough).
+    monkeypatch.setattr(claims, "cmd_status", lambda args: scoped.append(args.default_repo) or 0)
     assert claims.main(["status", "--json"]) == 0
-    assert seen == [1]
+    assert seen == [1] and scoped == [A]
 
 
 def test_named_repos_file_that_cannot_be_read_warns_with_repo(
