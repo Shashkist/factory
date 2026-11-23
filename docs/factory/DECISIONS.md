@@ -80,3 +80,18 @@ in force · factory · 2026-11-23 · revertible
 
 **Decision.** Review round 2 of #16 had one blocking finding: the duplicate-key walk followed YAML aliases with no visited set, so a 354-byte file took 54 s to load. The manager fixed it (e2a6962: each container is visited once, plus a unit test where an 8-level alias file loads in under 5 s), CI passed, and #16 merges without a third round, as Learning Factory does after two rounds (LF D145). The round-2 non-blocking findings go to a follow-up issue: compare constructed keys, not raw text (`1` vs `"1"`, `yes` vs `true`); backslash area globs behave differently on Windows and Linux; an empty glob is reported only with a root; Windows absolute globs only in unit tests, not the exam.
 **Revert.** Revert the #2 squash commit.
+
+## D7 · #12 review round 1: no fallback to one owner's repository; rebuilt with an exam-first commit
+in force · factory · 2026-11-23 · revertible
+
+**Decision.** Review round 1 of #18 (#12) asked for changes. Fixes, all in the code commit:
+- (a) With no `origin` and every repository unreadable, `status` and `stale` exit 1 (they printed "No issues are claimed." with exit 0, the false reassurance that invites a double claim).
+- (b) No fallback to `Shashkist/Learning_factory` when there is no repository in the current directory: without an origin, only the list file's entries are used (no repository inserted, no warning); with no file and no `--repo`, exit 1 and say "pass --repo". `claimed()` uses the current repository, not LF's hard-coded one.
+- (c) The default repository is the one `gh` itself targets (`gh repo view --json nameWithOwner`), so a fork checkout with an `upstream` remote never mislabels rows; `origin` is the fallback when that call fails.
+- (d) With `--repo` and no explicit list file, the default list file is still read when it exists, silently, only for clone paths, so `stale` keeps printing LF's `git -C <clone>` take-over line (spec G8).
+- (e) Repeated `--repo` values are de-duplicated case-insensitively, keeping order.
+The exam gains cases that a wrong port passed: heartbeat and release on a repository that is not the fake's default; every named repository unreadable gives exit 1; `status` in a checkout with an origin and no `--repo` reads that repository. Because the exam changes after code was committed, #12 is rebuilt as `f/12-claims-2`: the original exam, an exam-only commit with the new cases, then the code (D4 amendment 1, LF D103). #18 is closed for the new PR.
+
+**Why.** A tool every client installs must not read one owner's repository by default, and must never report "no claims" when it could read nothing.
+
+**Revert.** Revert the #12 squash commit; LF's `scripts/issue_lock.py` is unchanged.
