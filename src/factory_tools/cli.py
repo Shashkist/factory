@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from factory_tools import profile
+from factory_tools import claims, profile
 
 
 def _profile_check(args: argparse.Namespace) -> int:
@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     check = prof_cmds.add_parser("check", help="validate a profile")
     check.add_argument("path", nargs="?", default=profile.DEFAULT_PATH)
     check.set_defaults(func=_profile_check)
+    claims.add_commands(groups)
     return parser
 
 
