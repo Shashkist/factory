@@ -95,3 +95,18 @@ The exam gains cases that a wrong port passed: heartbeat and release on a reposi
 **Why.** A tool every client installs must not read one owner's repository by default, and must never report "no claims" when it could read nothing.
 
 **Revert.** Revert the #12 squash commit; LF's `scripts/issue_lock.py` is unchanged.
+
+## D8 · #13 review round 1: plain-file run, watchdogs on every entry point, a distrustful repository list
+in force · factory · 2026-11-23 · revertible
+
+**Decision.** Review round 1 of #19 (#13) asked for changes. Fixes for the code commit:
+- (a) `progress.py` runs as a plain file with only the standard library, as LF's script does: the `src` path is set before the package imports when run as a script, PyYAML is imported only when `LF_REPOS_FILE` is set, and `crew` is imported lazily inside the crew render, as in LF.
+- (b) The hook watchdog (LF #230) and the publish watchdog (LF #558, LF D147) start on every entry point: a `run(argv)` starts them for `hook` and `publish` and then calls `main`; the plain-file `__main__`, `python -m factory_tools.progress` and `factory-tools progress` all go through `run`. `main()` itself starts no watchdog, so in-process tests are not killed.
+- (c) The repository list is not trusted: a file over 64 KB is refused; only string `repo` values matching `owner/name` (`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`) count, deduplicated without regard to case; any parse problem, including `RecursionError` and `MemoryError`, falls back to the built-in pair with one stderr line. Values are never expanded with `str()` on arbitrary objects (alias bombs).
+- (d) The list is loaded once per process, keyed on path, size and modification time.
+- (e) Events store the full canonical repository name (the default's name when no `--repo` is given); only `render` maps the default repository to the `""` lane. If a ported LF test pins the stored `""`, the implementer keeps LF's stored form and the manager amends this entry.
+The exam gains cases that wrong code passed: a listed name with a dot (`re.escape` dropped), the lookalike `Shashkist/factory.evil.com`, both watchdogs through `python -m factory_tools progress`, the plain-file run under an interpreter without the package or PyYAML (`-S`), and bad repository files (alias bomb, deep nesting, oversized, invalid entries) that must fall back within seconds. #13 is rebuilt as `f/13-progress-2`: the original exam, an exam-only commit with the new cases, then the code (D4 amendment 1, LF D103). #19 is closed for the new PR. Scrub gaps carried over unchanged from LF (unscrubbed runner note and pass result, `ftp://`, `//host`, UNC paths, short `AKIA` keys, double-encoded dots) go to a follow-up issue in both repositories; they are not regressions.
+
+**Why.** The live page is public: its publisher must stay bounded on every entry point and must not let a malformed list widen what it publishes.
+
+**Revert.** Revert the #13 squash commit; LF's scripts are unchanged.
