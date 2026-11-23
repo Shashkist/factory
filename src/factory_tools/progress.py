@@ -38,9 +38,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import yaml
+if __name__ == "__main__" and not __package__:
+    # run as a plain file, with only the standard library: the package is found from the file's
+    # place, and the script's own folder must not shadow the standard library
+    sys.path[0] = str(Path(__file__).resolve().parents[1])
 
-from factory_tools import crew, hook_io
+from factory_tools import hook_io  # noqa: E402
 
 SCHEMA = 1
 STATIONS = ("plan", "exam", "build", "check", "ship")
@@ -77,34 +80,81 @@ DEFAULT_REPOS = ("Shashkist/Learning_factory", "Shashkist/factory")
 DEFAULT_REPO = DEFAULT_REPOS[0]  # without a repository list, events without a repo belong here
 
 
-def _repo_list() -> tuple[tuple[str, ...], str | None]:
+REPOS_FILE_MAX = 64 * 1024
+_REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_RepoList = tuple[tuple[str, ...], str | None]
+_repo_cache: dict[tuple[str, int, int], _RepoList] = {}
+
+
+def _read_repo_list(path: str) -> _RepoList:
+    """Parse the list in `path`; it is not trusted: a big file, or anything but `owner/name`
+    strings, is ignored. Raises on any problem."""
+    import yaml  # only needed when a list is given
+
+    if os.stat(path).st_size > REPOS_FILE_MAX:
+        raise ValueError("file over 64 KB")
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("not a list")
+    names: dict[str, str] = {}  # lower case -> first spelling
+    default: str | None = None
+    for row in data:
+        name = row.get("repo") if isinstance(row, dict) else None
+        if not isinstance(name, str) or not _REPO_NAME.fullmatch(name):
+            continue
+        canon = names.setdefault(name.lower(), name)
+        if default is None and row.get("default") is True:
+            default = canon
+    if not names:
+        raise ValueError("no owner/name entries")
+    return tuple(names.values()), default
+
+
+def _repo_list() -> _RepoList:
     """The listed repositories and the default one, from the YAML list in $LF_REPOS_FILE
-    (`- repo: owner/name`, `default: true`); the built-in pair when the file is absent or
-    unusable."""
+    (`- repo: owner/name`, `default: true`), loaded once per process for one file state; the
+    built-in pair when the file is absent or unusable."""
     path = os.environ.get("LF_REPOS_FILE")
-    if path:
+    if not path:
+        return DEFAULT_REPOS, DEFAULT_REPO
+    try:
+        st = os.stat(path)
+        key = (path, st.st_size, st.st_mtime_ns)
+    except OSError:
+        key = (path, -1, -1)
+    if key not in _repo_cache:
         try:
-            data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-            rows = [r for r in data if isinstance(r, dict) and r.get("repo")]
-            repos = tuple(dict.fromkeys(str(r["repo"]) for r in rows))
-            default = next((str(r["repo"]) for r in rows if r.get("default") is True), None)
-            if repos:
-                return repos, default
-        except (OSError, ValueError, TypeError, yaml.YAMLError):
-            pass
-    return DEFAULT_REPOS, DEFAULT_REPO
+            _repo_cache[key] = _read_repo_list(path)
+        except Exception as exc:
+            print(
+                f"factory_progress: repository list ignored ({type(exc).__name__}); "
+                "using the built-in pair",
+                file=sys.stderr,
+            )
+            _repo_cache[key] = (DEFAULT_REPOS, DEFAULT_REPO)
+    return _repo_cache[key]
 
 
 def canon_repo(repo: object) -> str | None:
-    """ "" for the default repository (or none given), the canonical name of another listed one,
+    """The full canonical name of a listed repository (the default's name when none is given),
     None for anything else (names are compared case-insensitively)."""
+    repos, default = _repo_list()
+    if not repo:
+        return default or ""
+    if not isinstance(repo, str):
+        return None
+    return {r.lower(): r for r in repos}.get(repo.lower())
+
+
+def lane_repo(repo: object) -> str | None:
+    """The lane of a stored repository: "" for the default repository (also a stored ""), its
+    canonical name for another listed one, None for anything unlisted."""
     if not repo:
         return ""
-    repos, default = _repo_list()
-    name = {r.lower(): r for r in repos}.get(str(repo).lower())
+    name = canon_repo(repo)
     if name is None:
         return None
-    return "" if name == default else name
+    return "" if name == _repo_list()[1] else name
 
 
 DETAIL_MAX = 160
@@ -303,6 +353,8 @@ def render_crew(at: datetime) -> list[dict[str, Any]]:
     if not d:
         return []
     try:
+        from factory_tools import crew
+
         pf = os.environ.get("LF_PROGRESS_FILE")
         return crew.build(Path(d), at, scrub, Path(pf + ".crew-cache.json") if pf else None)
     except Exception:  # noqa: BLE001 - the crew view must never break the publisher
@@ -313,9 +365,9 @@ def render(events: list[dict[str, Any]]) -> dict[str, Any]:
     # the redaction boundary: step events of a repository that is not on the allowlist are dropped,
     # names normalised
     evs = [
-        {**e, "repo": canon_repo(e.get("repo"))} if e.get("kind") == "step" else e
+        {**e, "repo": lane_repo(e.get("repo"))} if e.get("kind") == "step" else e
         for e in current_pass(events)
-        if e.get("kind") != "step" or canon_repo(e.get("repo")) is not None
+        if e.get("kind") != "step" or lane_repo(e.get("repo")) is not None
     ]
     t = now()
     runner = {
@@ -775,11 +827,16 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    # run as a plain file, the script's own folder must not shadow the standard library
-    sys.path[0] = str(Path(__file__).resolve().parents[1])
-    if sys.argv[1:2] == ["hook"]:
+def run(argv: list[str] | None = None) -> int:
+    """The entry point of every command line: start the watchdog the command needs, then `main`.
+    `main` itself starts none, so in-process callers are never killed."""
+    args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["hook"]:
         hook_io.start_watchdog(0)  # a hook must never outlive its caller; exiting 0 never blocks it
-    elif sys.argv[1:2] == ["publish"]:
-        _start_publish_watchdog(sys.argv[1:])
-    sys.exit(main())
+    elif args[:1] == ["publish"]:
+        _start_publish_watchdog(args)
+    return main(args)
+
+
+if __name__ == "__main__":
+    sys.exit(run())

@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     prog = groups.add_parser("progress", help="live progress and the crew view", add_help=False)
     prog.add_argument("args", nargs=argparse.REMAINDER)
-    prog.set_defaults(func=lambda a: progress.main(a.args))
+    prog.set_defaults(func=lambda a: progress.run(a.args))
     return parser
 
 
