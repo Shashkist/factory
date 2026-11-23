@@ -441,3 +441,150 @@ def test_no_command_echoes_or_stores_a_token_from_the_environment(world: World) 
 
 def test_the_claims_module_exists_in_the_package() -> None:
     assert module_file("factory_tools.claims") == ROOT / "src" / "factory_tools" / "claims.py"
+
+
+# --- review round 1: cases a wrong port passed (D7) --------------------------------------
+
+
+def checkout_of(world: World, repo: str) -> Path:
+    """A git checkout whose origin is `repo` (and, for the fake, the repository gh targets)."""
+    d = world.base / "checkout"
+    d.mkdir(exist_ok=True)
+    subprocess.run(["git", "init", "-q"], cwd=d, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/" + repo + ".git"],
+        cwd=d,
+        check=True,
+    )
+    return d
+
+
+def test_heartbeat_acts_on_the_named_repository_not_the_default_one(world: World) -> None:
+    # The fake's default repository is FACTORY; a call without -R would land there.
+    world.claim(FACTORY, "sess-a", "f/5-factory")
+    world.claim(LF, "sess-b", "f/5-lf")
+    before = world.comments(FACTORY)
+    beat = world.run("heartbeat", "5", "--session", "sess-b", "--repo", LF, "--step", "testing")
+    assert beat.returncode == 0, beat.stderr
+    assert "testing" in world.comments(LF)[0]
+    assert world.comments(FACTORY) == before
+
+
+def test_release_acts_on_the_named_repository_not_the_default_one(world: World) -> None:
+    world.claim(FACTORY, "sess-a", "f/5-factory")
+    world.claim(LF, "sess-b", "f/5-lf")
+    before = world.comments(FACTORY)
+    rel = world.run("release", "5", "--session", "sess-b", "--repo", LF)
+    assert rel.returncode == 0, rel.stderr
+    assert world.comments(FACTORY) == before
+    status = world.run("status", "--json", "--repo", FACTORY, "--repo", LF)
+    assert [(x["repo"], x["claim"]["session"]) for x in status_rows(status.stdout)] == [
+        (FACTORY, "sess-a")
+    ]
+
+
+def test_status_exits_non_zero_when_every_named_repository_is_unreadable(world: World) -> None:
+    r = world.run("status", "--repo", "Shashkist/nope-1", "--repo", "Shashkist/nope-2")
+    assert r.returncode != 0
+    assert "No issues are claimed." not in r.stdout
+    assert "Shashkist/nope-1" in r.stderr and "Shashkist/nope-2" in r.stderr
+
+
+def test_stale_exits_non_zero_when_every_named_repository_is_unreadable(world: World) -> None:
+    r = world.run(
+        "stale", "--older-than", "90", "--repo", "Shashkist/nope-1", "--repo", "Shashkist/nope-2"
+    )
+    assert r.returncode != 0
+    assert "No claim is older than" not in r.stdout
+    assert "Shashkist/nope-1" in r.stderr and "Shashkist/nope-2" in r.stderr
+
+
+def test_status_with_no_origin_and_an_all_unreadable_list_file_exits_non_zero(
+    world: World,
+) -> None:
+    listing = list_file(world.base, "Shashkist/nope-1", "Shashkist/nope-2")
+    r = world.run("status", "--repos-file", str(listing))
+    assert r.returncode != 0
+    assert "No issues are claimed." not in r.stdout
+
+
+def test_stale_with_no_origin_and_an_all_unreadable_list_file_exits_non_zero(
+    world: World,
+) -> None:
+    listing = list_file(world.base, "Shashkist/nope-1", "Shashkist/nope-2")
+    r = world.run("stale", "--older-than", "90", "--repos-file", str(listing))
+    assert r.returncode != 0
+    assert "No claim is older than" not in r.stdout
+
+
+def test_status_without_repo_reads_and_labels_the_repository_of_the_checkout(
+    world: World,
+) -> None:
+    world.claim(FACTORY, "sess-a", "f/5-factory")
+    world.claim(LF, "sess-b", "f/5-lf")
+    r = world.run("status", "--json", cwd=checkout_of(world, LF))
+    assert r.returncode == 0, r.stderr
+    rows = status_rows(r.stdout)
+    assert [(x["repo"], x["claim"]["session"]) for x in rows] == [(LF, "sess-b")]
+
+
+def test_status_without_repo_text_rows_are_labelled_with_the_checkout_repository(
+    world: World,
+) -> None:
+    world.claim(FACTORY, "sess-a", "f/5-factory")
+    world.claim(LF, "sess-b", "f/5-lf")
+    r = world.run("status", cwd=checkout_of(world, LF))
+    assert r.returncode == 0, r.stderr
+    line = next(ln for ln in r.stdout.splitlines() if "sess-b" in ln)
+    assert LF in line
+    assert "sess-a" not in r.stdout
+
+
+def test_status_with_no_checkout_no_repo_and_no_list_file_asks_for_repo(world: World) -> None:
+    world.claim(LF, "sess-b", "f/5-lf")
+    r = world.run("status")
+    assert r.returncode != 0
+    assert "--repo" in r.stderr + r.stdout
+    assert "sess-b" not in r.stdout
+    # Nothing was read from the repository of any particular owner.
+    reads = [c for c in world.state()["calls"] if LF in " ".join(c)]
+    assert reads == []
+
+
+def test_stale_with_no_checkout_no_repo_and_no_list_file_asks_for_repo(world: World) -> None:
+    world.seed_claim(LF, 5, "gone-b", "f/5-lf", 300)
+    r = world.run("stale", "--older-than", "90")
+    assert r.returncode != 0
+    assert "--repo" in r.stderr + r.stdout
+    assert "gone-b" not in r.stdout
+
+
+def test_a_repeated_repo_value_lists_each_claim_once(world: World) -> None:
+    world.claim(FACTORY, "sess-a", "f/5-factory")
+    r = world.run("status", "--json", "--repo", FACTORY, "--repo", FACTORY.lower())
+    assert r.returncode == 0, r.stderr
+    assert [(x["repo"], x["claim"]["session"]) for x in status_rows(r.stdout)] == [
+        (FACTORY, "sess-a")
+    ]
+
+
+def test_a_repeated_repo_value_in_text_output_lists_each_claim_once(world: World) -> None:
+    world.claim(FACTORY, "sess-a", "f/5-factory")
+    r = world.run("status", "--repo", FACTORY, "--repo", FACTORY.lower())
+    assert r.returncode == 0, r.stderr
+    assert sum("sess-a" in ln for ln in r.stdout.splitlines()) == 1
+
+
+def test_stale_with_repo_still_reads_clone_paths_from_the_default_list_file(
+    world: World,
+) -> None:
+    world.seed_claim(FACTORY, 5, "gone-a", "f/5-factory", 300)
+    (world.cwd / "docs" / "factory").mkdir(parents=True)
+    (world.cwd / "docs" / "factory" / "repos.yaml").write_text(
+        "- repo: " + FACTORY + "\n  clone: /srv/clones/factory\n", encoding="utf-8"
+    )
+    r = world.run("stale", "--older-than", "90", "--repo", FACTORY)
+    assert r.returncode == 0, r.stderr
+    assert "gone-a" in r.stdout
+    assert "git -C" in r.stdout
+    assert "/srv/clones/factory" in r.stdout

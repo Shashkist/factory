@@ -5,7 +5,9 @@ Run as: python fake_gh_claims.py <gh args>, with FAKE_GH_STATE pointing at a JSO
     {"default": "owner/name", "next_id": 1000, "calls": [],
      "repos": {"owner/name": {"issues": {"5": {"title": "...", "labels": [], "comments": []}}}}}
 
-A bare call (no -R/--repo) reaches `default`, like gh run from a checkout. It deliberately
+A bare call (no -R/--repo) reaches the origin of the git checkout it runs in (so `gh repo view`
+agrees with `git remote get-url origin`); outside a checkout it reaches `default` and
+`gh repo view` fails. Repository names match case-insensitively, like GitHub. It deliberately
 ignores --jq and returns the full JSON, so the module under test must filter in Python.
 Every call is recorded in `calls`; a call to `gh auth ...` is recorded and refused.
 """
@@ -61,15 +63,30 @@ save(s)
 if args[:1] == ["auth"]:
     fail("gh auth is not available here", 4)
 
+def checkout_repo() -> str | None:
+    """The repository gh itself would target here: the origin of a git checkout, if any."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "remote", "get-url", "origin"], capture_output=True, text=True, timeout=30
+        )
+    except OSError:
+        return None
+    m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$", out.stdout.strip())
+    return m.group(1) if out.returncode == 0 and m else None
+
+
 scope = values("--repo", "-R")
-repo = scope[-1] if scope else s["default"]
+here = checkout_repo()
+repo = scope[-1] if scope else (here or s["default"])
 
 
 def repo_state(name: str) -> dict:
-    try:
-        return s["repos"][name]
-    except KeyError:
-        fail("Could not resolve to a Repository with the name '" + name + "'")
+    for known, state in s["repos"].items():
+        if known.lower() == name.lower():
+            return state
+    fail("Could not resolve to a Repository with the name '" + name + "'")
     raise AssertionError
 
 
@@ -78,6 +95,8 @@ def labels_of(issue: dict) -> list[dict]:
 
 
 if args[:2] == ["repo", "view"]:
+    if not scope and here is None:
+        fail("not a git repository (or no origin): no repository to view")
     print(json.dumps({"nameWithOwner": repo}))
 elif args[:2] == ["issue", "view"]:
     issue = repo_state(repo)["issues"].get(args[2])
