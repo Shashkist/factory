@@ -24,3 +24,17 @@ in force · owner · 2026-11-23
 
 **Revert.** Remove the `factory-dashboard` key line from the server and the environment secrets; the runner switch has its own documented switch-back.
 
+
+## D3 · CI foundation layout: what is the exam, where the gates live, how the incident step is faked (#1)
+assumption · manager · 2026-11-23
+
+**Decision.**
+- The exam is every file under `tests/acceptance/**`, plus pytest configuration files (`conftest.py`, `pytest.ini`, `tox.ini`, `setup.cfg`) anywhere outside `tests/unit/`. Pytest is configured in a root `pytest.ini` (part of the exam), never in `pyproject.toml`, so a code commit cannot change how the exam runs. Code is every path outside `tests/` that is not the exam (`src/**`, `pyproject.toml`, workflows, ...). The CI surface (changed together with the exam only in bootstrap mode) is `src/factory_tools/ci/**` and `.github/workflows/ci.yml`.
+- The gates are stdlib-only modules: `src/factory_tools/ci/exam_integrity.py`, `src/factory_tools/ci/junit_gate.py`, `src/factory_tools/ci/incident.py`, each runnable as `python -m factory_tools.ci.<name>` and as a plain file (`python path/to/file.py`), so CI can run the base branch's copy of `exam_integrity.py` with `git show`, as LF does. With no copy on the base branch, CI runs the PR's copy with `--bootstrap` (this first PR); every later PR runs the base copy normally.
+- `python -m factory_tools.ci.incident --workflow <name> --run-url <url>` comments `Failed again: <url>` on the open issue titled `Incident: <name> failed` labelled `type:incident`, or opens it with labels `type:incident,priority:p0,status:ready`. It calls `gh` through the command prefix in the environment variable `FACTORY_GH` (a JSON array, default `["gh"]`), so a test can point it at a fake written in Python on any OS.
+
+**Why.** The issue leaves the gate location and the fake `gh` open. Keeping the gates stdlib-only keeps LF's "run the base copy" trick; a root `pytest.ini` closes the gap where `[tool.pytest.ini_options]` in `pyproject.toml` could skip exam cases from a code commit.
+
+**Alternatives.** Gates under `scripts/ci/` as in LF (outside the package, not type-checked by `mypy src`); the incident logic inline in the workflow shell (untestable with a fake `gh` on Windows).
+
+**Revert.** Move the modules and update `ci.yml`; nothing else depends on the paths yet.
