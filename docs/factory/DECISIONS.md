@@ -57,3 +57,18 @@ in force · factory · 2026-11-23 · revertible
 **Alternatives.** pydantic (error paths built in, a heavy dependency for one file); TOML through the standard library `tomllib` (no dependency, but the spec names `factory.yaml`).
 
 **Revert.** Revert the #2 squash commit; nothing else reads the profile yet.
+
+## D5 · #3 is sliced into three issues; module and command names of the tools package
+in force · factory · 2026-11-23 · revertible
+
+**Decision.** #3 ports five scripts and their tests (several thousand lines), far over one reviewable PR. It is sliced, each slice one PR, and #3 closes when all three are merged:
+- **#12 claims**: `issue_lock.py` → `src/factory_tools/claims.py`, command `factory-tools claim|release|heartbeat|status|stale` (criteria 1, 2 and 5 of #3 for claims).
+- **#13 progress and crew**: `factory_progress.py`, `_hook_io.py`, `factory_crew.py` → `src/factory_tools/progress.py`, `hook_io.py`, `crew.py`, command `factory-tools progress add|hook|pass-start|pass-end|runner-state|render|publish` (criteria 1, 3, 4 and 5 for progress). The port starts from LF's copy after LF #558 (bounded publish, LF D147).
+- **#14 CI paths, incident gate and docs**: `ci_paths.py`, `incident_gate.py` → `src/factory_tools/ci/paths.py`, `ci/incident_gate.py` (stdlib-only, runnable as files, like the D3 gates); `docs/tools.md` for every command of the three slices.
+All commands hang off the one CLI `factory_tools.cli:main` that #2 creates (`factory-tools profile check`), so each slice depends on #2. LF's tests for a ported script are ported by the exam-writer, with only import and path changes, into `tests/acceptance/ported/` (they are that slice's exam); every other change to a test is listed in the PR. LF keeps its own copies until #7 switches it over (spec G8).
+
+**Why.** A port of this size cannot be reviewed in one PR; three slices follow the scripts' own seams (claims, live view, CI). One CLI module avoids three PRs racing to create it.
+
+**Alternatives.** One PR for all of #3 (too large to review); one CLI per module (three console scripts instead of one `factory-tools`).
+
+**Revert.** Close #12 to #14 and reopen #3 as one piece.
