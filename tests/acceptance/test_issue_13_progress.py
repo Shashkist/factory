@@ -13,11 +13,12 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
-from helpers import env, module_file
+from helpers import ROOT, env, module_file
 
 LF = "Shashkist/Learning_factory"
 FACTORY = "Shashkist/factory"
@@ -514,3 +515,251 @@ def test_no_command_prints_or_stores_a_token_from_the_environment(
             continue
         assert FAKE_TOKEN not in p.read_text(encoding="utf-8", errors="replace"), p
     assert not any(FAKE_TOKEN in str(os.environ.get(v, "")) for v in TOKEN_VARS)
+
+
+# ---- review round 1 (D8): cases that wrong implementations passed --------------------------------
+
+
+def write_repos(box: Sandbox, text: str) -> None:
+    box.repos.write_text(text, encoding="utf-8")
+
+
+def test_listed_name_with_a_dot_is_matched_literally(tmp_path: Path) -> None:
+    box = Sandbox(tmp_path)
+    write_repos(box, f"- repo: {LF}\n  default: true\n- repo: acme/widgets.io\n  default: false\n")
+    assert box.add(1, detail="see https://github.com/acme/widgets.io/pull/4").returncode == 0
+    assert (
+        box.add(
+            2, detail="see https://github.com/acme/widgetsXio/pull/4", agent="impl-2"
+        ).returncode
+        == 0
+    )
+    assert (
+        box.add(3, detail="see github.com/acme/widgetsXio/pull/4", agent="impl-3").returncode == 0
+    )
+    ds = details(box.render())
+    assert "see https://github.com/acme/widgets.io/pull/4" in ds
+    assert "see <url>" in ds
+    assert not any("widgetsXio" in d for d in ds), ds
+    assert box.add(4, repo="acme/widgets.io", agent="impl-4").returncode == 0
+    assert box.add(5, repo="acme/widgetsXio", agent="impl-5").returncode == 0
+    assert lanes(box.render()) == [("", 1), ("", 2), ("", 3), ("acme/widgets.io", 4)]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/Shashkist/factory.evil.com/x",
+        "github.com/Shashkist/factory.evil.com",
+        "https://github.com/Shashkist/factory-evil/pull/1",
+        "https://github.com/Shashkist/Learning_factory.evil.com/x",
+        "github.com/Shashkist/Learning_factory.evil.com",
+    ],
+)
+def test_lookalike_repository_links_are_redacted(sb: Sandbox, url: str) -> None:
+    assert sb.add(3, repo=FACTORY, detail=f"see {url}").returncode == 0
+    assert details(sb.render())[0] == "see <url>"
+
+
+def _spawn_hook(sb: Sandbox, extra: dict[str, str]) -> float:
+    p = subprocess.Popen(
+        [sys.executable, "-m", "factory_tools", "progress", "hook"],
+        cwd=sb.base,
+        env=sb.env(extra),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    t0 = time.time()
+    try:
+        assert p.wait(timeout=20) == 0
+    finally:
+        p.kill()
+        if p.stdin:
+            p.stdin.close()
+    return time.time() - t0
+
+
+def test_hook_watchdog_ends_a_hook_whose_stdin_never_closes(sb: Sandbox) -> None:
+    # the stdin read bound is far away, so only the process watchdog can end this hook in time
+    assert _spawn_hook(sb, {"LF_HOOK_STDIN_TIMEOUT": "120", "LF_HOOK_WATCHDOG_S": "2"}) < 20
+    assert not sb.events.exists()
+
+
+def test_hook_stdin_bound_applies_through_the_documented_entry_point(sb: Sandbox) -> None:
+    assert _spawn_hook(sb, {"LF_HOOK_STDIN_TIMEOUT": "1", "LF_HOOK_WATCHDOG_S": "120"}) < 20
+    assert not sb.events.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a fifo")
+def test_publish_watchdog_ends_a_publish_that_hangs_before_the_copy(sb: Sandbox) -> None:
+    # the events file never reads (a fifo with no writer): only the watchdog can end publish
+    os.mkfifo(sb.events)
+    key = sb.base / "key"
+    t0 = time.time()
+    r = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "factory_tools",
+            "progress",
+            "publish",
+            "--key",
+            str(key),
+            "--host",
+            "nobody@127.0.0.1",
+            "--force",
+        ],
+        cwd=sb.base,
+        env=sb.env({"LF_PUBLISH_TIMEOUT_S": "1"}),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert time.time() - t0 < 40
+    assert r.returncode == 0
+    state = Path(str(key) + ".last")
+    assert state.exists() and state.read_text().startswith("fail ")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX stand-in")
+def test_publish_is_bounded_when_the_remote_copy_never_returns(sb: Sandbox) -> None:
+    bin_dir = sb.base / "bin"
+    bin_dir.mkdir()
+    stand_in = bin_dir / "ssh"
+    stand_in.write_text("#!/bin/sh\nsleep 300\n", encoding="utf-8")
+    stand_in.chmod(0o755)
+    sb.cli("pass-start")
+    key = sb.base / "key"
+    t0 = time.time()
+    r = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "factory_tools",
+            "progress",
+            "publish",
+            "--key",
+            str(key),
+            "--host",
+            "nobody@127.0.0.1",
+            "--force",
+        ],
+        cwd=sb.base,
+        env=sb.env(
+            {"LF_PUBLISH_TIMEOUT_S": "2", "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+        ),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert time.time() - t0 < 30
+    assert r.returncode == 0
+    assert Path(str(key) + ".last").read_text().startswith("fail ")
+
+
+def test_plain_file_run_needs_only_the_standard_library(tmp_path: Path) -> None:
+    out = tmp_path / "live.json"
+    e = env({"LF_PROGRESS_FILE": str(tmp_path / "progress.jsonl")})
+    e.pop("PYTHONPATH", None)
+    e.pop("LF_REPOS_FILE", None)
+    script = ROOT / "src" / "factory_tools" / "progress.py"
+    r = subprocess.run(
+        [sys.executable, "-S", str(script), "render", "--out", str(out)],
+        cwd=tmp_path,
+        env=e,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert r.returncode == 0, r.stderr
+    assert out.exists() and json.loads(out.read_text(encoding="utf-8"))["schema"] == 1
+
+
+def alias_bomb(levels: int = 9) -> str:
+    lines = ["- &a0 [x, x, x, x, x, x, x, x, x, x]"]
+    for i in range(1, levels):
+        lines.append(f"- &a{i} [" + ", ".join([f"*a{i - 1}"] * 10) + "]")
+    lines.append(f"- repo: *a{levels - 1}")
+    return "\n".join(lines) + "\n"
+
+
+def many_entries() -> str:
+    body = "".join(f"- repo: acme/r{i}\n  default: false\n" for i in range(4000))
+    return body + f"- repo: {LF}\n  default: true\n"
+
+
+BAD_LISTS = {
+    "alias-bomb": alias_bomb(),
+    "deep-nesting": "[" * 20000 + "]" * 20000 + "\n",
+    "oversized": many_entries(),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(BAD_LISTS))
+def test_a_bad_repository_file_falls_back_to_the_builtin_pair(tmp_path: Path, kind: str) -> None:
+    box = Sandbox(tmp_path)
+    write_repos(box, BAD_LISTS[kind])
+    t0 = time.time()
+    a = box.add(7, repo=FACTORY, detail="see https://github.com/Shashkist/factory/pull/3")
+    b = box.add(8, agent="impl-2", detail="see https://github.com/acme/r5/pull/1")
+    c = box.add(9, repo="acme/r5", agent="impl-3")
+    live = box.render()
+    assert time.time() - t0 < 30
+    assert a.returncode == b.returncode == c.returncode == 0
+    assert lanes(live) == [("", 8), (FACTORY, 7)]  # the event is kept, the unlisted lane is not
+    ds = details(live)
+    assert "see https://github.com/Shashkist/factory/pull/3" in ds
+    assert "see <url>" in ds
+
+
+def test_entries_that_are_not_owner_name_strings_are_ignored(tmp_path: Path) -> None:
+    box = Sandbox(tmp_path)
+    write_repos(
+        box,
+        f"- repo: {LF}\n  default: true\n"
+        f"- repo: {FACTORY}\n"
+        "- repo: Shashkist\n"
+        "- repo: me@x.com\n"
+        "- repo: https://evil.example/x\n"
+        "- repo: 123\n"
+        "- repo: [a, b]\n"
+        "- repo: a/b/c\n"
+        "- repo: {a: b}\n"
+        "- not-an-entry\n",
+    )
+    for i, bad in enumerate(["Shashkist", "me@x.com", "https://evil.example/x", "a/b/c"]):
+        assert box.add(20 + i, repo=bad, agent=f"bad-{i}").returncode == 0
+    assert (
+        box.add(
+            1, repo=FACTORY, detail="see https://github.com/Shashkist/factory/pull/3"
+        ).returncode
+        == 0
+    )
+    assert (
+        box.add(
+            2, agent="impl-2", detail="see https://github.com/Shashkist/other/pull/1"
+        ).returncode
+        == 0
+    )
+    assert (
+        box.add(3, agent="impl-3", detail="see https://github.com/evil.example/x").returncode == 0
+    )
+    live = box.render()
+    blob = json.dumps(live)
+    assert "me@x.com" not in blob and "evil.example" not in blob
+    assert lanes(live) == [("", 2), ("", 3), (FACTORY, 1)]
+    ds = details(live)
+    assert "see https://github.com/Shashkist/factory/pull/3" in ds
+    assert not any("Shashkist/other" in d for d in ds)
+
+
+def test_event_without_repo_keeps_its_own_repository_when_the_list_changes(tmp_path: Path) -> None:
+    box = Sandbox(tmp_path, with_repos=False)  # list unset: the built-in default is LF
+    assert box.add(12).returncode == 0
+    box.with_repos = True
+    write_repos(box, f"- repo: {FACTORY}\n  default: true\n- repo: {LF}\n  default: false\n")
+    assert lanes(box.render()) == [(LF, 12)]  # not re-attributed to the new default
+    assert box.add(12, agent="impl-2").returncode == 0  # written with FACTORY as the default
+    box.with_repos = False
+    assert lanes(box.render()) == [("", 12), (FACTORY, 12)]
