@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to a PR cancels that PR's older run. Pushes to main get a group
+# per commit, so main runs never cancel or queue behind each other.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Lint, types, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv run ruff check .
+      - run: uv run mypy src
+      - run: uv run pytest tests/unit -q
+
+  acceptance:
+    name: Acceptance exam
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Run the exam
+        run: uv run pytest tests/acceptance -q --junitxml=acceptance.xml
+      - name: JUnit gate (no empty, skipped, failed or errored exam)
+        if: ${{ !cancelled() }}
+        run: uv run python -m factory_tools.ci.junit_gate acceptance.xml
+
+  exam-integrity:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Exam integrity per commit
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch -q origin "$BASE_REF"
+          base="origin/$BASE_REF"
+          flag=""
+          # Run the base branch copy so a PR cannot weaken its own check.
+          # Bootstrap mode: while the base branch has no copy yet (the first PR,
+          # the one that adds it) the PR's own copy runs with --bootstrap.
+          # Every later PR finds the base copy and runs it normally.
+          if git show "$base:src/factory_tools/ci/exam_integrity.py" > "$RUNNER_TEMP/ei.py" 2>/dev/null; then
+            script="$RUNNER_TEMP/ei.py"
+          else
+            script=src/factory_tools/ci/exam_integrity.py
+            flag="--bootstrap"
+          fi
+          python3 "$script" "$base" "$HEAD_SHA" $flag
