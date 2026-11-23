@@ -3,10 +3,13 @@ name = "factory-tools"
 version = "0.1.0"
 description = "Factory CI gates and tooling"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["pyyaml"]
+
+[project.scripts]
+factory-tools = "factory_tools.cli:main"
 
 [dependency-groups]
-dev = ["ruff", "mypy", "pytest"]
+dev = ["ruff", "mypy", "pytest", "types-PyYAML"]
 
 [build-system]
 requires = ["hatchling"]
