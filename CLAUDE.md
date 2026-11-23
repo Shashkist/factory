@@ -31,4 +31,12 @@ Read first:
 
 ## Verification commands
 
-Defined by the CI foundation issue; until then there is no code here.
+From the repository root (uv, Python 3.12):
+
+- `uv run ruff check .`
+- `uv run mypy src`
+- `uv run pytest -q` (unit tests and the acceptance exam; pytest is configured only in the root `pytest.ini`, which is part of the exam)
+- The acceptance run with its gate, as CI does it: `uv run pytest tests/acceptance -q --junitxml=acceptance.xml`, then `uv run python -m factory_tools.ci.junit_gate acceptance.xml` (fails on an empty, skipped, failed or errored exam).
+- Exam integrity before a PR: `PYTHONPATH=src python -m factory_tools.ci.exam_integrity origin/main HEAD` (add `--bootstrap` only for the PR that introduces the check).
+
+Unit tests live in `tests/unit/`; `tests/acceptance/` is the exam and is never edited together with code.
