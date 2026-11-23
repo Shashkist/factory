@@ -1,8 +1,11 @@
-"""Makes `factory_tools` importable from the ported tests without an installed package."""
+"""Support for the ported LF tests: the package source is importable, also in child processes."""
 
+import os
 import sys
 from pathlib import Path
 
-SRC = str(Path(__file__).resolve().parents[3] / "src")
-if SRC not in sys.path:
-    sys.path.insert(0, SRC)
+SRC = Path(__file__).resolve().parents[3] / "src"
+
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+os.environ["PYTHONPATH"] = str(SRC) + os.pathsep + os.environ.get("PYTHONPATH", "")
