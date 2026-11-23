@@ -30,14 +30,31 @@ jobs:
     name: Acceptance exam
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # A code commit could register a pytest plugin (a pytest11 entry point) from src/.
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Run the exam
-        run: uv run pytest tests/acceptance -q --junitxml=acceptance.xml
+        # Runtime defences: only the root pytest.ini (exam) configures the run;
+        # no addopts, and no conftest/config picked up from above tests/.
+        run: uv run pytest -c pytest.ini tests/acceptance -q -o addopts="" --confcutdir=tests --junitxml=acceptance.xml
       - name: JUnit gate (no empty, skipped, failed or errored exam)
         if: ${{ !cancelled() }}
-        run: uv run python -m factory_tools.ci.junit_gate acceptance.xml
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          script=src/factory_tools/ci/junit_gate.py
+          # On a PR run the base branch's copy so a PR cannot weaken its own gate.
+          # The bootstrap PR (base has no copy yet) uses its own.
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch -q --depth=1 origin "$BASE_REF"
+            if git show "origin/$BASE_REF:$script" > "$RUNNER_TEMP/jg.py" 2>/dev/null; then
+              script="$RUNNER_TEMP/jg.py"
+            fi
+          fi
+          python3 "$script" acceptance.xml
 
   exam-integrity:
     if: github.event_name == 'pull_request'

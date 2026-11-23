@@ -25,12 +25,19 @@ jobs:
       GH_REPO: ${{ github.repository }}
       WF_NAME: ${{ github.event.workflow_run.name }}
       RUN_URL: ${{ github.event.workflow_run.html_url }}
-      PYTHONPATH: src
     steps:
+      # Fail open: a broken checkout or script must never hide an incident.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        continue-on-error: true
         with:
           persist-credentials: false
       # The labels type:incident, priority:p0 and status:ready must exist in the
       # repository; if one is missing, gh issue create fails and this job goes red.
+      # Runs the file directly (the same code as python -m factory_tools.ci.incident)
+      # so a broken package __init__ cannot stop it.
       - name: Comment on or open the incident issue
-        run: python3 -m factory_tools.ci.incident --workflow "$WF_NAME" --run-url "$RUN_URL"
+        run: |
+          python3 src/factory_tools/ci/incident.py --workflow "$WF_NAME" --run-url "$RUN_URL" || \
+            gh issue create --title "Incident: $WF_NAME failed" \
+              --label "type:incident,priority:p0,status:ready" \
+              --body "The $WF_NAME workflow failed: $RUN_URL"
