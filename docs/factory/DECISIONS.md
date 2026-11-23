@@ -38,3 +38,5 @@ assumption · manager · 2026-11-23
 **Alternatives.** Gates under `scripts/ci/` as in LF (outside the package, not type-checked by `mypy src`); the incident logic inline in the workflow shell (untestable with a fake `gh` on Windows).
 
 **Revert.** Move the modules and update `ci.yml`; nothing else depends on the paths yet.
+
+**D3 amendment 1 (2026-11-23, review of #9).** (a) The exam is every path under `tests/` outside `tests/unit/` (as in LF), plus the pytest configuration files (`conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini`, `setup.cfg`) anywhere outside `tests/unit/`; round 1 showed a `tests/.pytest.ini` from a code commit deselecting exam cases. (b) CI runs the exam with `-c pytest.ini -o addopts="" --confcutdir=tests` and `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, and the JUnit gate from the base branch's copy. (c) Correction: a code commit cannot change how the exam runs *through pytest configuration*; code that runs inside the pytest process (for example `src/sitecustomize.py`) still can, and review stays the guard (#11 closes the known case).
