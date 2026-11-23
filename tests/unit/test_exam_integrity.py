@@ -75,3 +75,37 @@ def test_merge_commit_in_range_fails(
     monkeypatch.chdir(tmp_path)
     assert exam_integrity.main("main~1", "HEAD", False) == 1
     assert "merge commits are not allowed" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "path", ["tests/.pytest.ini", "tests/pyproject.toml", "tests/other/x.py", "src/.pytest.ini"]
+)
+def test_pytest_config_and_other_tests_paths_are_exam(path: str) -> None:
+    assert len(check([[CODE], [path]])) == 1
+    assert len(check([[path, CODE]])) == 1
+
+
+def test_root_pyproject_stays_code() -> None:
+    assert check([["pyproject.toml"], [EXAM]]) != []
+    assert check([[EXAM], ["pyproject.toml"]]) == []
+
+
+def test_non_ascii_exam_path_is_classified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def git(*a: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *a],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q", "-b", "main")
+    git("commit", "-q", "--allow-empty", "-m", "base")
+    for name in ("src/שלום.py", "tests/acceptance/שלום.py"):
+        f = tmp_path / name
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("1\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "both")
+    monkeypatch.chdir(tmp_path)
+    assert exam_integrity.main("HEAD~1", "HEAD", False) == 1

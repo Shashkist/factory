@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 from factory_tools.ci.junit_gate import check
@@ -81,5 +83,22 @@ def test_nested_parent_sums_children_not_double_counted(tmp_path: Path) -> None:
         '<testsuites failures="1"><testsuite tests="2" failures="1">'
         '<testsuite tests="2" failures="1"><testcase name="a"><failure/></testcase>'
         '<testcase name="b"/></testsuite></testsuite></testsuites>',
+    )
+    assert check(r) == ["1 acceptance tests failed"]
+
+
+def test_no_allow_empty_flag(tmp_path: Path) -> None:
+    # an empty report cannot be accepted by any flag
+    gate = Path(__file__).parents[2] / "src" / "factory_tools" / "ci" / "junit_gate.py"
+    report = _report(tmp_path, 0, 0)
+    r = subprocess.run([sys.executable, str(gate), report, "--allow-empty"], check=False)
+    assert r.returncode == 1
+
+
+def test_root_testsuite_with_failing_nested_suite(tmp_path: Path) -> None:
+    r = _xml(
+        tmp_path,
+        '<testsuite tests="2"><testsuite tests="2">'
+        '<testcase name="a"><failure/></testcase><testcase name="b"/></testsuite></testsuite>',
     )
     assert check(r) == ["1 acceptance tests failed"]

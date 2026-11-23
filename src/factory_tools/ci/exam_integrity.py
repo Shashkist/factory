@@ -2,9 +2,9 @@
 
 Usage: python exam_integrity.py <base> <head> [--bootstrap]
 
-The exam is every file under tests/acceptance/, plus pytest configuration
-files (conftest.py, pytest.ini, tox.ini, setup.cfg) anywhere outside
-tests/unit/. Code is every path outside tests/ that is not the exam.
+The exam is every file under tests/ except tests/unit/, plus pytest
+configuration files (conftest.py, pytest.ini, .pytest.ini, tox.ini, setup.cfg)
+anywhere outside tests/unit/. Code is every path outside tests/ that is not the exam.
 Fails when:
 - the range contains merge commits;
 - one commit changes the exam and code together;
@@ -18,7 +18,7 @@ import subprocess
 import sys
 
 MERGE_MSG = "merge commits are not allowed on a PR branch; rebase onto main"
-PYTEST_CONFIG = {"conftest.py", "pytest.ini", "tox.ini", "setup.cfg"}
+PYTEST_CONFIG = {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"}
 
 
 def _is_exam(path: str) -> bool:
@@ -26,7 +26,7 @@ def _is_exam(path: str) -> bool:
     if parts[:2] == ["tests", "unit"]:
         return False
     # pytest configuration outside tests/unit/ can skip or rewrite exam results
-    return parts[-1] in PYTEST_CONFIG or parts[:2] == ["tests", "acceptance"]
+    return parts[-1] in PYTEST_CONFIG or parts[0] == "tests"
 
 
 def _is_code(path: str) -> bool:
@@ -56,7 +56,9 @@ def check(commits: list[list[str]], bootstrap: bool = False) -> list[str]:
 
 
 def _git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+    return subprocess.run(
+        ["git", *args], check=True, capture_output=True, encoding="utf-8", errors="replace"
+    ).stdout
 
 
 def main(base: str, head: str, bootstrap: bool) -> int:
@@ -68,8 +70,9 @@ def main(base: str, head: str, bootstrap: bool) -> int:
         [
             f
             for f in _git(
-                "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha
-            ).split("\n")
+                "-c", "core.quotePath=false", "diff-tree", "-z", "--no-commit-id",
+                "--name-only", "-r", "--root", sha,
+            ).split("\0")
             if f
         ]
         for sha in shas
