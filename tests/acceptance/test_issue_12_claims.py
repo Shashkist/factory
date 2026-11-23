@@ -542,21 +542,25 @@ def test_status_without_repo_text_rows_are_labelled_with_the_checkout_repository
 
 def test_status_with_no_checkout_no_repo_and_no_list_file_asks_for_repo(world: World) -> None:
     world.claim(LF, "sess-b", "f/5-lf")
+    before = len(world.state()["calls"])
     r = world.run("status")
     assert r.returncode != 0
     assert "--repo" in r.stderr + r.stdout
     assert "sess-b" not in r.stdout
-    # Nothing was read from the repository of any particular owner.
-    reads = [c for c in world.state()["calls"] if LF in " ".join(c)]
-    assert reads == []
+    # The command itself read nothing from the repository of any particular owner.
+    own = world.state()["calls"][before:]
+    assert [c for c in own if LF in " ".join(c)] == []
 
 
 def test_stale_with_no_checkout_no_repo_and_no_list_file_asks_for_repo(world: World) -> None:
     world.seed_claim(LF, 5, "gone-b", "f/5-lf", 300)
+    before = len(world.state()["calls"])
     r = world.run("stale", "--older-than", "90")
     assert r.returncode != 0
     assert "--repo" in r.stderr + r.stdout
     assert "gone-b" not in r.stdout
+    own = world.state()["calls"][before:]
+    assert [c for c in own if LF in " ".join(c)] == []
 
 
 def test_a_repeated_repo_value_lists_each_claim_once(world: World) -> None:
