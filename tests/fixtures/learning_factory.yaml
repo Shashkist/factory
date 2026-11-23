@@ -1,0 +1,87 @@
+# Example project profile: Learning Factory (Shashkist/Learning_factory).
+methodology: "0.1"
+
+verify:
+  manager:
+    cwd: labs/manager
+    run:
+      - uv run pytest -q
+      - uv run ruff check .
+      - uv run mypy app
+  web:
+    cwd: labs/web
+    run:
+      - npm test -- --run
+      - npx tsc --noEmit
+      - npm run lint
+      - npm run build
+  tooling:
+    cwd: "."
+    run:
+      - uvx pytest scripts -q
+
+exam:
+  - "labs/**/tests/acceptance/**"
+
+protected_paths:
+  - "scripts/laptop/**"
+  - "scripts/factory_guard.py"
+  - "scripts/test_factory_guard.py"
+  - ".github/workflows/**"
+  - "labs/deploy/**"
+
+required_checks:
+  - manager
+  - web
+  - exam-integrity
+
+labels:
+  ready: "status:ready"
+  in-progress: "status:in-progress"
+  done: "status:done"
+  needs-owner: "status:needs-owner"
+  p0: "priority:p0"
+  p1: "priority:p1"
+  feature: "type:feature"
+  incident: "type:incident"
+
+limits:
+  ci_rounds: 6
+  review_rounds: 3
+  parallel_issues: 4
+
+models:
+  manager: opus
+  exam-writer: sonnet
+  implementer: sonnet
+  reviewer: opus
+  researcher: sonnet
+
+smoke:
+  workflow: smoke.yml
+
+research_hints:
+  - KodeKloud
+  - Killercoda
+  - iximiuz Labs
+  - Instruqt
+
+areas:
+  manager:
+    - "labs/manager/**"
+  web:
+    - "labs/web/**"
+  content:
+    - "labs/content/**"
+  deploy:
+    - "labs/deploy/**"
+  ci:
+    - ".github/**"
+
+planning:
+  spec: docs/superpowers/specs/2026-11-14-lab-platform-design.md
+  keep_ready: 5
+
+owner_files:
+  decisions: docs/factory/DECISIONS.md
+  owner: docs/factory/OWNER.md
