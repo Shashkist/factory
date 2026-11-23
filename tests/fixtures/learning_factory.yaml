@@ -58,7 +58,7 @@ models:
   researcher: sonnet
 
 smoke:
-  workflow: smoke.yml
+  workflow: server-smoke.yml
 
 research_hints:
   - KodeKloud

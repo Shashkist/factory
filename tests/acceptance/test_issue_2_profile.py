@@ -159,7 +159,7 @@ def test_c1_models() -> None:
 
 
 def test_c1_smoke() -> None:
-    assert load_fixture().smoke.workflow == "smoke.yml"
+    assert load_fixture().smoke.workflow == "server-smoke.yml"
 
 
 def test_c1_research_hints() -> None:
@@ -364,7 +364,7 @@ def test_c3_planning_requires_spec(tmp_path: Path) -> None:
 
 # ---- criterion 4: loading never executes anything ------------------------------
 
-EVIL = 'rm -rf "$HOME"; touch PWNED && $(id) | `x` > out.txt & echo $((1+1)) ; touch PWNED2'
+EVIL = 'touch PWNED && $(touch PWNED2) | `touch PWNED3` > PWNED4 ; echo $((1+1)) & touch PWNED5'
 
 
 def listing(d: Path) -> list[str]:
@@ -483,3 +483,130 @@ def test_c5_model_has_the_spec_fields() -> None:
         "planning",
         "owner_files",
     }
+
+
+# ---- review round 1: stricter validation, harmless exam ------------------------
+
+MARKERS = ["PWNED", "PWNED2", "PWNED3", "PWNED4", "PWNED5"]
+
+
+def test_r1_no_marker_is_created_anywhere(tmp_path: Path) -> None:
+    proj, cwd = two_dirs(tmp_path)
+    f = write(proj, MIN + "verify:\n  m:\n    run: [" + json.dumps(EVIL) + "]\n")
+    r = check(f, cwd=cwd)
+    assert r.returncode == 0, r.stdout + r.stderr
+    for d in (proj, cwd, tmp_path):
+        for m in MARKERS:
+            assert not (d / m).exists()
+
+
+def both(tmp_path: Path, text: str, path: str, code: int = 1) -> None:
+    """The problem is reported at `path` by the API (with and without a root)
+    and by the CLI, which exits with `code` and prints the path."""
+    api = profile_api()
+    f = write(tmp_path / "proj", text)
+    t = tree(tmp_path)
+    for root in (None, t):
+        _, problems = api.load_profile(f, root=root)
+        assert path in problem_paths(problems), (root, problem_paths(problems))
+    r = check(f, cwd=t)
+    assert r.returncode == code, r.stdout + r.stderr
+    assert path in r.stdout
+    assert "Traceback" not in r.stderr
+
+
+def test_r1_unknown_model_role(tmp_path: Path) -> None:
+    both(tmp_path, MIN + "models:\n  reviwer: opus\n", "models.reviwer")
+
+
+def test_r1_unknown_key_in_smoke(tmp_path: Path) -> None:
+    both(tmp_path, MIN + "smoke:\n  run: echo\n  runn: x\n", "smoke.runn")
+
+
+def test_r1_unknown_key_in_planning(tmp_path: Path) -> None:
+    both(tmp_path, MIN + "planning:\n  spec: s.md\n  keep_rdy: 3\n", "planning.keep_rdy")
+
+
+def test_r1_unknown_key_in_owner_files(tmp_path: Path) -> None:
+    both(tmp_path, MIN + "owner_files:\n  decision: x.md\n", "owner_files.decision")
+
+
+def test_r1_planning_keep_ready_boolean_refused(tmp_path: Path) -> None:
+    text = MIN + "planning:\n  spec: s.md\n  keep_ready: true\n"
+    both(tmp_path, text, "planning.keep_ready")
+
+
+@pytest.mark.parametrize(
+    "glob",
+    ["../outside/**", "src/../../x/*", "/etc/*"],
+    ids=["parent", "inner-parent", "absolute"],
+)
+def test_r1_area_glob_outside_the_repository(tmp_path: Path, glob: str) -> None:
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "f.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "x").mkdir()
+    (tmp_path / "x" / "f.txt").write_text("x", encoding="utf-8")
+    text = MIN + "areas:\n  a:\n    - " + json.dumps(glob) + "\n"
+    both(tmp_path, text, "areas.a[0]")
+
+
+def test_r1_second_glob_index_is_reported(tmp_path: Path) -> None:
+    text = MIN + 'areas:\n  a: ["labs/manager/**", "../x/**"]\n'
+    both(tmp_path, text, "areas.a[1]")
+
+
+@pytest.mark.parametrize("glob", [".", "./"])
+def test_r1_dot_glob_matches_the_whole_repository(tmp_path: Path, glob: str) -> None:
+    t = tree(tmp_path)
+    f = write(tmp_path / "proj", MIN + "areas:\n  all: [" + json.dumps(glob) + "]\n")
+    _, problems = profile_api().load_profile(f, root=t)
+    assert problems == []
+    r = check(f, cwd=t)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Traceback" not in r.stderr
+
+
+def test_r1_duplicate_top_level_key(tmp_path: Path) -> None:
+    both(tmp_path, MIN + GOOD_VERIFY + GOOD_VERIFY, "verify")
+
+
+def test_r1_empty_exam_list(tmp_path: Path) -> None:
+    both(tmp_path, MIN + "exam: []\n", "exam")
+
+
+def test_r1_empty_methodology(tmp_path: Path) -> None:
+    both(tmp_path, 'methodology: ""\n', "methodology")
+
+
+def test_r1_empty_verify_command(tmp_path: Path) -> None:
+    text = MIN + 'verify:\n  manager:\n    run: ["uv run x", ""]\n'
+    both(tmp_path, text, "verify.manager.run[1]")
+
+
+def test_r1_empty_smoke_run(tmp_path: Path) -> None:
+    both(tmp_path, MIN + 'smoke:\n  run: ""\n', "smoke.run")
+
+
+def test_r1_empty_planning_spec(tmp_path: Path) -> None:
+    both(tmp_path, MIN + 'planning:\n  spec: ""\n', "planning.spec")
+
+
+def test_r1_empty_owner_files_decisions(tmp_path: Path) -> None:
+    both(tmp_path, MIN + 'owner_files:\n  decisions: ""\n', "owner_files.decisions")
+
+
+def test_r1_deeply_nested_yaml_exits_2_without_traceback(tmp_path: Path) -> None:
+    f = write(tmp_path / "proj", "a: " + "[" * 3000 + "]" * 3000 + "\n")
+    r = check(f, cwd=tmp_path)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "Traceback" not in r.stderr
+    assert "Traceback" not in r.stdout
+
+
+def test_r1_document_level_problem_prints_as_file(tmp_path: Path) -> None:
+    f = write(tmp_path / "proj", "- a\n- b\n")
+    _, problems = profile_api().load_profile(f)
+    assert "" in problem_paths(problems)
+    r = check(f, cwd=tmp_path)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert any(ln.startswith("(file): ") for ln in r.stdout.splitlines())
