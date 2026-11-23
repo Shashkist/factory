@@ -110,3 +110,5 @@ The exam gains cases that wrong code passed: a listed name with a dot (`re.escap
 **Why.** The live page is public: its publisher must stay bounded on every entry point and must not let a malformed list widen what it publishes.
 
 **Revert.** Revert the #13 squash commit; LF's scripts are unchanged.
+
+**D7 amendment 1 (2026-11-24, review round 2 of #20).** Round 2 had one blocking finding: in-process calls of `cmd_status`, `cmd_stale` and `claimed()` asked the real `gh` for the default repository, ignoring the injected runner (16 real calls from the ported "no network" tests; 12 ported tests failed outside a git checkout). Fixed in 6ae19f3: only the command-line handlers resolve the scope; a direct call keeps LF's behaviour; `claimed()` names every repository with `-R`; an explicitly named unreadable `--repos-file` warns; the `origin` fallback drops `scheme://userinfo@` before matching (rule 7). The ported exam passes from an exported copy outside any checkout (185 passed). As in D6, #20 merges on green CI without a third round. The remaining exam gap (the fake's `gh repo view` always equals `origin`) is #21.
