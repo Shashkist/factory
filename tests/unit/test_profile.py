@@ -56,6 +56,18 @@ def test_glob_with_root_reports_item_index(tmp_path: Path) -> None:
     assert [p.path for p in problems] == ["areas.a[1]"]
 
 
+def test_duplicate_key_in_nested_mapping(tmp_path: Path) -> None:
+    text = 'methodology: "1"\nverify:\n  m:\n    run: [a]\n    cwd: x\n    cwd: y\n'
+    assert paths(tmp_path, text) == ["verify.m.cwd"]
+
+
+def test_invalid_glob_is_a_problem_not_a_traceback(tmp_path: Path) -> None:
+    f = tmp_path / "p.yaml"
+    f.write_text('methodology: "1"\nareas:\n  a: [""]\n', encoding="utf-8")
+    _, problems = load_profile(f, root=tmp_path)
+    assert [(p.path, p.message) for p in problems] == [("areas.a[0]", "invalid glob")]
+
+
 def test_invalid_yaml_is_fatal(tmp_path: Path) -> None:
     prof, problems = load(tmp_path, "a: [unclosed\n")
     assert prof is None

@@ -3,7 +3,7 @@ name = "factory-tools"
 version = "0.1.0"
 description = "Factory CI gates and tooling"
 requires-python = ">=3.12"
-dependencies = ["pyyaml"]
+dependencies = ["pyyaml>=6"]
 
 [project.scripts]
 factory-tools = "factory_tools.cli:main"

@@ -1,12 +1,12 @@
 # Project profile: `.factory/factory.yaml`
 
-A project tells the Factory how it works through one file, `.factory/factory.yaml`. The Factory reads and validates it; commands in it are data and are never run by the loader. Unknown keys are errors at every level. Check a file with:
+A project tells the Factory how it works through one file, `.factory/factory.yaml`. The Factory reads and validates it; commands in it are data and are never run by the loader. Unknown keys and duplicate keys are errors at every level. Strings that name something (`methodology`, commands, workflow, spec, owner files) must not be empty. Check a file with:
 
 ```
 factory-tools profile check [path]
 ```
 
-The default path is `.factory/factory.yaml`. Each problem prints as `<key path>: <message>` (list items as `[i]`); exit 0 means ok, 1 means problems, 2 means the file cannot be read or is not valid YAML. Area globs are checked against the repository root (the parent of `.factory/`, else the current directory).
+The default path is `.factory/factory.yaml`. Each problem prints as `<key path>: <message>` (list items as `[i]`); a problem with the document itself prints as `(file): <message>`; exit 0 means ok, 1 means problems, 2 means the file cannot be read, is not valid YAML or is nested too deeply. Area globs are checked against the repository root (the parent of `.factory/`, else the current directory).
 
 Only `methodology` is required.
 
@@ -31,7 +31,7 @@ verify:
 
 ## `exam`
 
-List of globs: the acceptance tests. Default: `["**/tests/acceptance/**"]`.
+Non-empty list of globs: the acceptance tests. Default: `["**/tests/acceptance/**"]`.
 
 ```yaml
 exam:
@@ -57,7 +57,7 @@ required_checks: [manager, web]
 
 ## `labels`
 
-Mapping of the Factory's label name to the project's label name. Default: `{}` (the Factory's own names).
+Mapping of the Factory's label name to the project's label name. Default: `{}` (the Factory's own names). The keys are open for now (the Factory's label set is fixed later), so a typo in a key is not caught yet.
 
 ```yaml
 labels:
@@ -77,7 +77,7 @@ limits:
 
 ## `models`
 
-Mapping of role (`manager`, `exam-writer`, `implementer`, `reviewer`, `researcher`) to a model id. Default: `{}`.
+Mapping of role (`manager`, `exam-writer`, `implementer`, `reviewer`, `researcher`) to a non-empty model id. Any other key is an error. Default: `{}`.
 
 ```yaml
 models:
@@ -104,7 +104,7 @@ research_hints: [KodeKloud, Killercoda]
 
 ## `areas`
 
-Mapping of area name to a non-empty list of path globs. Each glob must match something under the repository root. Default: `{}`.
+Mapping of area name to a non-empty list of path globs. Each glob must be relative (no leading `/`, `\` or drive letter) and have no `..` segment; `.` means the whole repository. Each glob must match something under the repository root. Default: `{}`.
 
 ```yaml
 areas:

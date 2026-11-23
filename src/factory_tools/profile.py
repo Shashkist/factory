@@ -5,6 +5,8 @@ The file is data only. It is read with ``yaml.safe_load`` and nothing in it is e
 
 from __future__ import annotations
 
+import re
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,30 @@ from typing import Any
 import yaml
 
 DEFAULT_PATH = ".factory/factory.yaml"
+ROLES = {"manager", "exam-writer", "implementer", "reviewer", "researcher"}
+_ABSOLUTE = re.compile(r"^([/\\]|[A-Za-z]:)")
+
+
+class _Loader(yaml.SafeLoader):
+    """``safe_load`` that also remembers mappings with a repeated key (no python tags)."""
+
+    def __init__(self, stream: str) -> None:
+        super().__init__(stream)
+        self.duplicates: dict[int, list[str]] = {}
+
+    def construct_yaml_map(self, node: yaml.MappingNode) -> Generator[dict[Any, Any], None, None]:
+        data: dict[Any, Any] = {}
+        yield data
+        seen: set[str] = set()
+        for key_node, _ in node.value:
+            if isinstance(key_node, yaml.ScalarNode) and key_node.tag != "tag:yaml.org,2002:merge":
+                if key_node.value in seen:
+                    self.duplicates.setdefault(id(data), []).append(key_node.value)
+                seen.add(key_node.value)
+        data.update(self.construct_mapping(node))
+
+
+_Loader.add_constructor("tag:yaml.org,2002:map", _Loader.construct_yaml_map)
 
 
 @dataclass(frozen=True)
@@ -94,11 +120,14 @@ class _Validator:
                 self.err(_join(path, str(key)), "unknown key")
         return {k: v for k, v in value.items() if k in allowed}
 
-    def string(self, value: Any, path: str) -> str | None:
-        if isinstance(value, str):
-            return value
-        self.err(path, "must be a string")
-        return None
+    def string(self, value: Any, path: str, non_empty: bool = False) -> str | None:
+        if not isinstance(value, str):
+            self.err(path, "must be a string")
+            return None
+        if non_empty and not value:
+            self.err(path, "must not be empty")
+            return None
+        return value
 
     def integer(self, value: Any, path: str) -> int | None:
         if isinstance(value, int) and not isinstance(value, bool) and value > 0:
@@ -106,23 +135,32 @@ class _Validator:
         self.err(path, "must be a positive integer")
         return None
 
-    def strings(self, value: Any, path: str, non_empty: bool = False) -> tuple[str, ...] | None:
+    def strings(
+        self, value: Any, path: str, non_empty: bool = False, items: bool = False
+    ) -> tuple[str, ...] | None:
         if not isinstance(value, list):
             self.err(path, "must be a list of strings")
             return None
         if non_empty and not value:
             self.err(path, "must not be empty")
             return None
-        out = [self.string(item, _join(path, i)) for i, item in enumerate(value)]
+        out = [self.string(item, _join(path, i), items) for i, item in enumerate(value)]
         return tuple(s for s in out if s is not None) if None not in out else None
 
-    def str_map(self, value: Any, path: str) -> dict[str, str] | None:
-        if not isinstance(value, dict):
-            self.err(path, "must be a mapping of strings")
-            return None
+    def str_map(
+        self, value: Any, path: str, allowed: set[str] | None = None
+    ) -> dict[str, str] | None:
+        if allowed is None:
+            if not isinstance(value, dict):
+                self.err(path, "must be a mapping of strings")
+                return None
+        else:
+            value = self.mapping(value, path, allowed)
+            if value is None:
+                return None
         out: dict[str, str] = {}
         for k, v in value.items():
-            s = self.string(v, _join(path, str(k)))
+            s = self.string(v, _join(path, str(k)), non_empty=allowed is not None)
             if s is not None:
                 out[str(k)] = s
         return out
@@ -140,7 +178,7 @@ class _Validator:
             if "run" not in m:
                 self.err(_join(p, "run"), "is required")
                 continue
-            run = self.strings(m["run"], _join(p, "run"), non_empty=True)
+            run = self.strings(m["run"], _join(p, "run"), non_empty=True, items=True)
             cwd = self.string(m["cwd"], _join(p, "cwd")) if "cwd" in m else "."
             if run is not None and cwd is not None:
                 out[str(name)] = VerifyGroup(run=run, cwd=cwd)
@@ -166,9 +204,9 @@ class _Validator:
         if "workflow" in m:
             if "cwd" in m:
                 self.err(_join(path, "cwd"), "only applies to run")
-            wf = self.string(m["workflow"], _join(path, "workflow"))
+            wf = self.string(m["workflow"], _join(path, "workflow"), True)
             return Smoke(workflow=wf) if wf is not None else None
-        run = self.string(m["run"], _join(path, "run"))
+        run = self.string(m["run"], _join(path, "run"), True)
         cwd = self.string(m["cwd"], _join(path, "cwd")) if "cwd" in m else "."
         return Smoke(run=run, cwd=cwd) if run is not None and cwd is not None else None
 
@@ -178,8 +216,12 @@ class _Validator:
             return None
         out: dict[str, tuple[str, ...]] = {}
         for name, raw in value.items():
-            globs = self.strings(raw, _join(path, str(name)), non_empty=True)
+            gp = _join(path, str(name))
+            globs = self.strings(raw, gp, non_empty=True)
             if globs is not None:
+                for i, g in enumerate(globs):
+                    if (msg := _glob_problem(g)) is not None:
+                        self.err(_join(gp, i), msg)
                 out[str(name)] = globs
         return out
 
@@ -192,7 +234,7 @@ class _Validator:
         if "spec" not in m:
             self.err(_join(path, "spec"), "is required")
             return None
-        spec = self.string(m["spec"], _join(path, "spec"))
+        spec = self.string(m["spec"], _join(path, "spec"), True)
         keep = self.integer(m["keep_ready"], _join(path, "keep_ready")) if "keep_ready" in m else 5
         return Planning(spec=spec, keep_ready=keep) if spec is not None and keep else None
 
@@ -204,9 +246,9 @@ class _Validator:
         decisions = d.decisions
         owner = d.owner
         if "decisions" in m:
-            decisions = self.string(m["decisions"], _join(path, "decisions")) or ""
+            decisions = self.string(m["decisions"], _join(path, "decisions"), True) or ""
         if "owner" in m:
-            owner = self.string(m["owner"], _join(path, "owner")) or ""
+            owner = self.string(m["owner"], _join(path, "owner"), True) or ""
         return OwnerFiles(decisions=decisions, owner=owner)
 
     def profile(self, data: Any) -> Profile | None:
@@ -218,15 +260,15 @@ class _Validator:
         if "methodology" not in m:
             self.err("methodology", "is required")
         else:
-            kw["methodology"] = self.string(m["methodology"], "methodology")
+            kw["methodology"] = self.string(m["methodology"], "methodology", True)
         sections: dict[str, Any] = {
             "verify": self.verify,
-            "exam": self.strings,
+            "exam": lambda v, p: self.strings(v, p, non_empty=True),
             "protected_paths": self.strings,
             "required_checks": self.strings,
             "labels": self.str_map,
             "limits": self.limits,
-            "models": self.str_map,
+            "models": lambda v, p: self.str_map(v, p, ROLES),
             "smoke": self.smoke,
             "research_hints": self.strings,
             "areas": self.areas,
@@ -242,11 +284,33 @@ class _Validator:
         return Profile(**{k: v for k, v in kw.items() if v is not None or k in optional})
 
 
-def _glob_matches(root: Path, pattern: str) -> bool:
+def _glob_problem(glob: str) -> str | None:
+    if _ABSOLUTE.match(glob):
+        return "glob must be relative to the repository"
+    if ".." in re.split(r"[/\\]", glob):
+        return "glob must not contain a '..' segment"
+    return None
+
+
+def _glob_matches(root: Path, pattern: str) -> bool | None:
+    """True or False for a match; None when the glob cannot be used."""
+    if pattern in (".", "./"):
+        return root.exists()
     try:
         return next(root.glob(pattern), None) is not None
-    except (ValueError, NotImplementedError, OSError):
-        return False
+    except Exception:  # noqa: BLE001 - any failure of the path library is a problem, not a crash
+        return None
+
+
+def _walk(data: Any, path: str, dupes: dict[int, list[str]]) -> Iterator[Problem]:
+    if isinstance(data, dict):
+        for key in dupes.get(id(data), []):
+            yield Problem(_join(path, key), "duplicate key")
+        for k, v in data.items():
+            yield from _walk(v, _join(path, str(k)), dupes)
+    elif isinstance(data, list):
+        for i, v in enumerate(data):
+            yield from _walk(v, _join(path, i), dupes)
 
 
 def load_profile(
@@ -260,21 +324,31 @@ def load_profile(
         text = Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         return None, [Problem("", f"cannot read {path}: {exc}", fatal=True)]
+    loader = _Loader(text)
     try:
-        data = yaml.safe_load(text)
+        try:
+            data = loader.get_single_data()
+        finally:
+            loader.dispose()
+        v = _Validator()
+        prof = v.profile(data)
+        problems = list(_walk(data, "", loader.duplicates)) + v.problems
     except yaml.YAMLError as exc:
         first = (str(exc).splitlines() or [type(exc).__name__])[0]
         return None, [Problem("", f"invalid YAML: {first}", fatal=True)]
-    v = _Validator()
-    prof = v.profile(data)
-    problems = v.problems
+    except RecursionError:
+        return None, [Problem("", "invalid YAML: nested too deeply", fatal=True)]
     if root is not None and isinstance(data, dict) and isinstance(data.get("areas"), dict):
         for name, globs in data["areas"].items():
             if isinstance(globs, list):
                 for i, g in enumerate(globs):
-                    if isinstance(g, str) and not _glob_matches(root, g):
-                        msg = f"glob {g!r} matches nothing"
-                        problems.append(Problem(f"areas.{name}[{i}]", msg))
+                    if isinstance(g, str) and _glob_problem(g) is None:
+                        found = _glob_matches(root, g)
+                        if found is None:
+                            problems.append(Problem(f"areas.{name}[{i}]", "invalid glob"))
+                        elif not found:
+                            msg = f"glob {g!r} matches nothing"
+                            problems.append(Problem(f"areas.{name}[{i}]", msg))
     if problems:
         return None, problems
     return prof, []
