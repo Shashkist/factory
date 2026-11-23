@@ -98,7 +98,7 @@ def test_resolve_scope_reads_the_named_repos_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("LF_REPOS_FILE", raising=False)
-    monkeypatch.setattr(claims, "origin_repo", lambda: A)
+    monkeypatch.setattr(claims, "origin_repo", lambda run=None: A)
     listing = tmp_path / "repos.yaml"
     listing.write_text("- repo: " + A + "\n- repo: " + C + "\n  clone: C:\\c\n", encoding="utf-8")
     args = Namespace(repo=None, repos_file=str(listing))
@@ -114,7 +114,7 @@ def test_resolve_scope_honours_the_lf_variable(
     listing = tmp_path / "repos.yaml"
     listing.write_text("- repo: " + A + "\n- repo: " + C + "\n", encoding="utf-8")
     monkeypatch.setenv("LF_REPOS_FILE", str(listing))
-    monkeypatch.setattr(claims, "origin_repo", lambda: A)
+    monkeypatch.setattr(claims, "origin_repo", lambda run=None: A)
     args = Namespace(repo=None, repos_file=None)
     claims.resolve_scope(args)
     assert args.repos == [A, C]
@@ -124,7 +124,7 @@ def test_resolve_scope_with_repo_and_no_file_does_not_read_a_file(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("LF_REPOS_FILE", raising=False)
-    monkeypatch.setattr(claims, "origin_repo", lambda: None)
+    monkeypatch.setattr(claims, "origin_repo", lambda run=None: None)
     args = Namespace(repo=A, repos_file=None)
     claims.resolve_scope(args)
     assert args.default_repo == "" and args.repos == []
@@ -183,8 +183,8 @@ def test_no_repository_and_no_file_exits_one_and_says_repo(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("LF_REPOS_FILE", raising=False)
-    monkeypatch.setattr(claims, "origin_repo", lambda: None)
-    assert claims.cmd_status(Namespace(json=True, repo=None, repos_file=None), Gh()) == 1
+    monkeypatch.setattr(claims, "origin_repo", lambda run=None: None)
+    assert claims.main(["status", "--json"]) == 1
     assert "--repo" in capsys.readouterr().err
 
 
@@ -192,7 +192,7 @@ def test_no_origin_uses_only_the_file_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("LF_REPOS_FILE", raising=False)
-    monkeypatch.setattr(claims, "origin_repo", lambda: None)
+    monkeypatch.setattr(claims, "origin_repo", lambda run=None: None)
     listing = tmp_path / "repos.yaml"
     listing.write_text("- repo: " + C + "\n", encoding="utf-8")
     args = Namespace(repo=None, repos_file=str(listing))
@@ -201,14 +201,51 @@ def test_no_origin_uses_only_the_file_entries(
     assert capsys.readouterr().err == ""
 
 
-def test_claimed_uses_the_current_repository_as_default(
+def test_in_process_calls_start_no_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*a: Any, **k: Any) -> None:
+        raise AssertionError("a real process was started")
+
+    monkeypatch.setattr(claims.subprocess, "run", boom)
+    monkeypatch.setattr(claims.subprocess, "Popen", boom)
+    gh = Gh()
+    assert [r["repo"] for r in claims.claimed([A], gh)] == [A]
+    assert claims.cmd_status(Namespace(json=True, repo=None), gh) == 0
+    assert claims.cmd_stale(Namespace(older_than=0.0, repo=None), gh) == 0
+
+
+def test_command_line_resolves_scope_but_direct_call_does_not(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(claims, "origin_repo", lambda: A)
-    gh = Gh()
-    rows = claims.claimed([A], gh)
-    assert [r["repo"] for r in rows] == [A]
-    assert all("-R" not in c for c in gh.calls)
+    seen: list[int] = []
+    monkeypatch.setattr(claims, "origin_repo", lambda run=None: seen.append(1) or A)
+    monkeypatch.setattr(claims, "_run", Gh())
+    assert claims.cmd_status(Namespace(json=True, repo=None), Gh()) == 0
+    assert seen == []
+    assert claims.main(["status", "--json"]) == 0
+    assert seen == [1]
+
+
+def test_named_repos_file_that_cannot_be_read_warns_with_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(claims, "origin_repo", lambda run=None: None)
+    args = Namespace(repo=A, repos_file=str(tmp_path / "nope.yaml"))
+    claims.resolve_scope(args)
+    assert "nope.yaml" in capsys.readouterr().err
+
+
+def test_origin_fallback_never_keeps_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Proc:
+        returncode = 0
+        stdout = "https://user:s3cret@github.com/Shashkist/factory.git"
+
+    def no_gh(argv: list[str]) -> str:
+        raise RuntimeError("no")
+
+    monkeypatch.setattr(claims.subprocess, "run", lambda *a, **k: Proc())
+    assert claims.origin_repo(no_gh) == A
+    Proc.stdout = "https://tok@github.com/Shashkist/factory"
+    assert claims.origin_repo(no_gh) == A
 
 
 def test_repo_with_the_default_file_reads_clones_silently(
@@ -216,7 +253,7 @@ def test_repo_with_the_default_file_reads_clones_silently(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("LF_REPOS_FILE", raising=False)
-    monkeypatch.setattr(claims, "origin_repo", lambda: None)
+    monkeypatch.setattr(claims, "origin_repo", lambda run=None: None)
     (tmp_path / "docs" / "factory").mkdir(parents=True)
     (tmp_path / "docs" / "factory" / "repos.yaml").write_text(
         "- repo: " + A + "\n  clone: C:\\a\n- repo: " + C + "\n", encoding="utf-8"

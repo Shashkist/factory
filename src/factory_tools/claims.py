@@ -73,7 +73,8 @@ def _run(args: list[str]) -> str:
     return proc.stdout
 
 
-#: LF's own repository. Only a name for callers and tests; never a fallback.
+#: LF's own repository. The default of `read_repos(path)` and of a direct in-process call
+#: of a command with no scope; the command line resolves its own scope and never uses it.
 HERE_REPO = "Shashkist/Learning_factory"
 
 #: Which repositories the factory works on; override with LF_REPOS_FILE.
@@ -537,7 +538,7 @@ def _claimed_issues(
     """Claim rows of every repository read. `failed` collects the repositories
     that could not be read (each also printed once, as skipped)."""
     out: list[Row] = []
-    default = getattr(args, "default_repo", "")
+    default = getattr(args, "default_repo", HERE_REPO)
     only = _named(args)
     for repo in only or getattr(args, "repos", None) or [default]:
         # The default repository is reached with bare calls, as always.
@@ -562,8 +563,9 @@ def _claimed_issues(
 
 def claimed(repos: list[str], run: Run = _run, failed: list[str] | None = None) -> list[Row]:
     """Claim rows (with `repo` and `number`) of the given repositories; `failed`
-    collects the ones that could not be read."""
-    args = argparse.Namespace(repos=repos, default_repo=origin_repo() or "", repo=None)
+    collects the ones that could not be read. Every repository is named with -R, so no
+    lookup of the current repository (and no process other than `run`) is needed."""
+    args = argparse.Namespace(repos=repos, default_repo="", repo=None)
     return _claimed_issues(run, args, failed)
 
 
@@ -586,20 +588,20 @@ def _default_unreadable(args: Any, failed: list[str]) -> bool:
     named = _named(args)
     if named:
         return all(r in failed for r in named)
-    default = getattr(args, "default_repo", "")
+    default = getattr(args, "default_repo", HERE_REPO)
     if default:
         return default in failed
     return bool(failed) and all(r in failed for r in getattr(args, "repos", None) or [])
 
 
-def origin_repo() -> str | None:
+def origin_repo(run: Run | None = None) -> str | None:
     """owner/name of the repository `gh` targets from here, or None.
 
     Asks `gh repo view`, so it agrees with every bare call; falls back to the
     `origin` remote when gh cannot say.
     """
     try:
-        data = json.loads(_run(["repo", "view", "--json", "nameWithOwner"]))
+        data = json.loads((run or _run)(["repo", "view", "--json", "nameWithOwner"]))
         name = data["nameWithOwner"]
         if isinstance(name, str) and name.count("/") == 1:
             return name
@@ -611,7 +613,9 @@ def origin_repo() -> str | None:
         )
     except OSError:
         return None
-    match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", proc.stdout.strip())
+    # Drop `scheme://userinfo@` first: a remote may carry a token, which is never kept.
+    url = re.sub(r"^([a-z][a-z0-9+.-]*://)[^/@]*@", r"", proc.stdout.strip())
+    match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", url)
     return match.group(1) if proc.returncode == 0 and match else None
 
 
@@ -634,7 +638,9 @@ def resolve_scope(args: Any) -> None:
                 e["repo"]: e["clone"] for e in _parse_repos_file(file) if e.get("clone")
             }
         except (OSError, ValueError):
-            pass
+            if path:
+                print("warning: " + str(file) + " (repos.yaml) is missing or unreadable",
+                      file=sys.stderr)
         return
     args.repos, _, args.clones = read_repos(Path(path) if path else None, here or "")
 
@@ -668,10 +674,6 @@ class RepoAction(argparse.Action):
 
 def cmd_status(args: Any, run: Run = _run) -> int:
     failed: list[str] = []
-    if not hasattr(args, "default_repo"):
-        resolve_scope(args)
-    if _no_scope(args):
-        return 1
     rows = _claimed_issues(run, args, failed)
     if _default_unreadable(args, failed):
         # Silence here would read as "nothing is claimed" and invite a double claim.
@@ -729,10 +731,6 @@ def cmd_stale(args: Any, run: Run = _run) -> int:
     both were holding finished work.
     """
     failed: list[str] = []
-    if not hasattr(args, "default_repo"):
-        resolve_scope(args)
-    if _no_scope(args):
-        return 1
     claimed = _claimed_issues(run, args, failed)
     if _default_unreadable(args, failed):
         return 1
@@ -742,7 +740,7 @@ def cmd_stale(args: Any, run: Run = _run) -> int:
         return 0
     for r in rows:
         c = r["claim"]
-        other = r["repo"] != getattr(args, "default_repo", "")
+        other = r["repo"] != getattr(args, "default_repo", HERE_REPO)
         clone = getattr(args, "clones", {}).get(r["repo"])
         git = "git -C '" + clone.replace("\\", "/") + "' " if other and clone else "git "
         common = (
@@ -776,6 +774,19 @@ def cmd_stale(args: Any, run: Run = _run) -> int:
             + " --steal --reason 'session gone'" + NL
         )
     return 0
+
+
+def _scoped_command(cmd: Callable[..., int]) -> Callable[..., int]:
+    """The command-line form of status/stale: resolves the scope from the checkout
+    (which runs `gh` and `git`) first. Direct in-process calls skip all of that."""
+
+    def handler(args: Any) -> int:
+        resolve_scope(args)
+        if _no_scope(args):
+            return 1
+        return cmd(args)
+
+    return handler
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -833,7 +844,7 @@ def add_commands(sub: Any) -> None:
     s.add_argument("--json", action="store_true")
     s.add_argument("--repo", action=RepoAction, help="owner/name, repeatable: only these")
     s.add_argument("--repos-file", help="repositories list (- repo: owner/name)")
-    s.set_defaults(func=cmd_status)
+    s.set_defaults(func=_scoped_command(cmd_status))
 
     t = sub.add_parser(
         "stale", help="claims whose session has gone quiet, and how to continue them"
@@ -843,7 +854,7 @@ def add_commands(sub: Any) -> None:
     )
     t.add_argument("--repo", action=RepoAction, help="owner/name, repeatable: only these")
     t.add_argument("--repos-file", help="repositories list (- repo: owner/name)")
-    t.set_defaults(func=cmd_stale)
+    t.set_defaults(func=_scoped_command(cmd_stale))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
