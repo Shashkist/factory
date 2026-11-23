@@ -40,3 +40,20 @@ assumption · manager · 2026-11-23
 **Revert.** Move the modules and update `ci.yml`; nothing else depends on the paths yet.
 
 **D3 amendment 1 (2026-11-23, review of #9).** (a) The exam is every path under `tests/` outside `tests/unit/` (as in LF), plus the pytest configuration files (`conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini`, `setup.cfg`) anywhere outside `tests/unit/`; round 1 showed a `tests/.pytest.ini` from a code commit deselecting exam cases. (b) CI runs the exam with `-c pytest.ini -o addopts="" --confcutdir=tests` and `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, and the JUnit gate from the base branch's copy. (c) Correction: a code commit cannot change how the exam runs *through pytest configuration*; code that runs inside the pytest process (for example `src/sitecustomize.py`) still can, and review stays the guard (#11 closes the known case).
+
+## D4 · Project profile schema, loader and CLI (#2)
+in force · factory · 2026-11-23 · revertible
+
+**Decision.** The spec leaves the exact `factory.yaml` schema to the builder (section 14). For #2:
+- **Parser and model.** `yaml.safe_load` from PyYAML, the package's first runtime dependency (`types-PyYAML` in dev); never `yaml.load`. The model is frozen dataclasses in `src/factory_tools/profile.py` with a hand-written validator, so every problem carries its key path (`verify.manager.run`) and no further dependency is needed.
+- **API.** `load_profile(path, root=None) -> tuple[Profile | None, list[Problem]]`; a `Problem` has `path` (dotted key path, list items as `[i]`, the empty string for the document itself) and `message`. Area globs are checked against `root` only when a root is given; the CLI passes the repository root (the parent of `.factory/` when the file sits there, else the current directory).
+- **CLI.** `factory-tools profile check [path]` (console script `factory-tools = "factory_tools.cli:main"`, also `python -m factory_tools profile check`); default path `.factory/factory.yaml`. One line per problem, `<key path>: <message>`, exit 1 when there is any; `ok` and exit 0 when there is none; exit 2 when the file cannot be read or is not valid YAML.
+- **Fields and defaults.** `methodology` (string, required). `verify`: mapping area name to `{cwd: string = ".", run: non-empty list of strings}`, default `{}`. `exam`: list of globs, default `["**/tests/acceptance/**"]`. `protected_paths`: list of globs, default `[]`. `required_checks`: list of strings, default `[]`. `labels`: mapping of the Factory's label name to the project's label name, default `{}` (the same names). `limits`: `{ci_rounds: 5, review_rounds: 2, parallel_issues: 3}`, positive integers (a boolean is not an integer). `models`: mapping role (`manager`, `exam-writer`, `implementer`, `reviewer`, `researcher`) to a model id, default `{}`. `smoke`: `null` (default) or a mapping with exactly one of `run` (string, with optional `cwd`, default ".") or `workflow` (string). `research_hints`: list of strings, default `[]`. `areas`: mapping name to a non-empty list of globs, default `{}`. `planning`: `null` (default, off) or `{spec: string (required), keep_ready: positive integer = 5}`. `owner_files`: `{decisions: ".factory/DECISIONS.md", owner: ".factory/OWNER.md"}`. Unknown keys are errors at every level.
+- **Docs.** `docs/profile.md` has one `## \`<field>\`` heading per top-level field, in model order, each with its type, default and an example; a full example closes the page.
+- The Learning Factory example profile is `tests/fixtures/learning_factory.yaml` (part of the exam under D3 amendment 1).
+
+**Why.** Key paths need a validator that walks the document; dataclasses keep the model typed for `mypy --strict` without pydantic. PyYAML is the common YAML reader and `safe_load` constructs only plain data, which is what criterion 4 asks.
+
+**Alternatives.** pydantic (error paths built in, a heavy dependency for one file); TOML through the standard library `tomllib` (no dependency, but the spec names `factory.yaml`).
+
+**Revert.** Revert the #2 squash commit; nothing else reads the profile yet.
