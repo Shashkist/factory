@@ -270,17 +270,21 @@ def add_counts(total: dict[str, Any], one: dict[str, Any]) -> None:
             total[key][k] = total[key].get(k, 0) + v
 
 
-def build(sources: list[Source], now: datetime) -> dict[str, Any]:
-    per_repo = [(s, s.issues()) for s in sources]
-    claim: dict[str, Any] | None = None
+def first_claim(per_repo: list[tuple[Source, list[dict[str, Any]]]]) -> dict[str, Any] | None:
+    """The first live claim: in-progress issues before in-review, repositories in order."""
     for status in ("in-progress", "in-review"):
         for src, issues in per_repo:
             for issue in issues:
                 if issue["state"] == "OPEN" and status in label_values(issue, "status:"):
                     found = current_claim(issue["number"], src.comments(issue["number"]))
-                    claim = claim or (found and {"repo": src.repo, **found})
-        if claim:
-            break
+                    if found:
+                        return {"repo": src.repo, **found}
+    return None
+
+
+def build(sources: list[Source], now: datetime) -> dict[str, Any]:
+    per_repo = [(s, s.issues()) for s in sources]
+    claim = first_claim(per_repo)
     totals: dict[str, Any] = {
         "open": 0, "closed": 0, "by_status": {}, "by_phase": {}, "by_priority": {},
     }
@@ -295,7 +299,12 @@ def build(sources: list[Source], now: datetime) -> dict[str, Any]:
     owner_open: list[dict[str, Any]] = []
     for src, issues in per_repo:
         counts = count_issues(issues)
-        repos[src.repo] = {"issues": counts}
+        own = first_claim([(src, issues)])
+        repos[src.repo] = {
+            "issues": counts,
+            "claim": own and {k: v for k, v in own.items() if k != "repo"},
+            "throughput": throughput(issues, now),
+        }
         add_counts(totals, counts)
         all_issues += issues
         ready += tag(src.repo, queue(issues))
