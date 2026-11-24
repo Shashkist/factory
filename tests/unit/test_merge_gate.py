@@ -42,8 +42,8 @@ def test_commit_files_names_the_repository_in_the_path_never_dash_r():
     assert merge_gate._commit_files(run, "o/r", "abc") == {"files": []}
     assert merge_gate._commit_files(run, None, "abc") == {"files": []}
     assert calls == [
-        ["api", "repos/o/r/commits/abc"],
-        ["api", "repos/{owner}/{repo}/commits/abc"],
+        ["api", "--paginate", "repos/o/r/commits/abc"],
+        ["api", "--paginate", "repos/{owner}/{repo}/commits/abc"],
     ]
 
 
@@ -53,3 +53,16 @@ def test_commit_files_without_repo_raises_on_failure():
 
     with pytest.raises(RuntimeError):
         merge_gate._commit_files(run, None, "abc")
+
+
+def test_commit_files_merges_concatenated_pages_and_gate_holds_on_page_two():
+    page1 = {"files": [{"filename": f"src/f{i}.py"} for i in range(300)]}
+    page2 = {"files": [{"filename": "tests/acceptance/test_x.py"}, {"filename": "src/g.py"}]}
+
+    def run(args: list[str]) -> str:
+        return json.dumps(page1) + json.dumps(page2)
+
+    assert len(merge_gate._commit_files(run, "o/r", "abc")["files"]) == 302
+    pr = {"commits": [{"oid": "abcdef0123"}]}
+    reasons = merge_gate._commit_reasons(pr, run, "o/r")
+    assert len(reasons) == 1 and "tests/acceptance" in reasons[0]
