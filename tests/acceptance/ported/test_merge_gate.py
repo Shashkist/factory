@@ -17,13 +17,18 @@ With --repo the gate reaches the repository the way the claim tools do (`-R repo
 commands, the repo in api paths).
 """
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+from helpers import env
 from merge_gate_world import (
     CODE_FILE,
     EXAM_FILE,
+    FAKE,
     HEAD,
+    HERE,
     OLD,
     OTHER,
     Gate,
@@ -320,7 +325,8 @@ def test_repo_option_reaches_that_repository_with_dash_R(make):
     for c in gh.calls():
         if c[0] == "api":
             paths = [a for a in c if a.startswith("repos/")]
-            assert any(OTHER in a or "{owner}/{repo}" in a for a in paths), c
+            # the real `gh api` fills the placeholder from the checkout, not from --repo
+            assert paths and all(OTHER in a and "{owner}" not in a for a in paths), c
         else:
             assert c[c.index("-R") + 1] == OTHER, c
 
@@ -330,3 +336,43 @@ def test_without_repo_option_no_dash_R(make):
     gh.run()
     calls = gh.calls()
     assert calls and not any("-R" in c for c in calls)
+
+
+def test_repo_option_with_placeholder_api_path_is_refused_by_the_fake(make):
+    """The fake mirrors the real gh: the placeholder ignores --repo, so it reads HERE."""
+    gh = make()
+    gh.write()
+    state = str(gh.state_path)
+    e = env({"FAKE_GH_STATE": state})
+    fake = [sys.executable, str(FAKE)]
+    ok = subprocess.run([*fake, "pr", "view", "9", "-R", OTHER, "--json", "x"],
+                        env=e, capture_output=True, text=True)
+    assert ok.returncode == 0, ok.stderr
+    path = "repos/{owner}/{repo}/commits/" + HEAD
+    bad = subprocess.run([*fake, "api", path], env=e, capture_output=True, text=True)
+    assert bad.returncode != 0
+    wrong = subprocess.run([*fake, "api", "repos/" + HERE + "/commits/" + HEAD],
+                           env=e, capture_output=True, text=True)
+    assert wrong.returncode != 0
+    right = subprocess.run([*fake, "api", "repos/" + OTHER + "/commits/" + HEAD],
+                           env=e, capture_output=True, text=True)
+    assert right.returncode == 0, right.stderr
+
+
+def test_commit_repository_is_the_pull_request_repository(make):
+    gh = make()
+    assert gh.run() == (0, ["MERGE"])
+    paths = [a for c in gh.calls() if c[0] == "api" for a in c if a.startswith("repos/")]
+    assert paths
+    for p in paths:
+        assert p.lower().startswith("repos/" + HERE.lower() + "/") or "{owner}/{repo}" in p, p
+
+
+def test_rename_out_of_tests_acceptance_with_code_holds(make):
+    gh = make()
+    gh.files[HEAD] = [
+        {"status": "renamed", "filename": "tests/unit/x.py",
+         "previous_filename": "tests/acceptance/x.py"},
+        CODE_FILE,
+    ]
+    assert_single_hold(gh.run(), "tests/acceptance", "code")

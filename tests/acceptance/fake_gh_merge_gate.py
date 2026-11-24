@@ -15,6 +15,14 @@ Run as: python fake_gh_merge_gate.py <gh args>, with FAKE_GH_STATE pointing at a
   path (case-insensitive, with or without -R); an unknown repository fails. Only the
   `{owner}/{repo}` placeholder resolves to the -R repository or the default (gh fills it
   from the current checkout itself).
+* The repository a `pr view` call resolved to is remembered (`resolved` in the state file).
+  A later `api` call whose repository (named in the path, or the placeholder's default)
+  differs from it is refused, as the real `gh` would read another repository's commits. So
+  a gate that reads `repos/<other>/commits/...` for a PR in `<repo>`, or that uses the
+  placeholder while `--repo` points elsewhere, fails.
+* A commit entry is a path (served as {"filename": path}) or a full file object (served as is,
+  e.g. {"status": "renamed", "filename": new, "previous_filename": old}).
+* `api` accepts `--paginate` and returns the whole list in one object (the gate may use it).
 * `issue view <n> --json comments` returns {"comments": [...]} (empty for an unknown issue).
 * Anything that writes (pr merge, comment, review, edit, close, api -X ...) is recorded in
   `writes` and refused: the gate is read-only.
@@ -80,6 +88,7 @@ if args[:2] == ["pr", "view"]:
     pr = state["prs"].get(args[2])
     if pr is None:
         fail("no pull request " + args[2])
+    s["resolved"] = repo
     save()
     print(json.dumps(pr))
 elif group == "api":
@@ -89,12 +98,16 @@ elif group == "api":
     if path.startswith("repos/{owner}/{repo}/"):
         path = "repos/" + repo + path[len("repos/{owner}/{repo}"):]
     parts = path.split("/")
-    state = lookup("/".join(parts[1:3]))
+    target = "/".join(parts[1:3])
+    state = lookup(target)
+    if s.get("resolved") and target.lower() != s["resolved"].lower():
+        fail("api read " + target + " but the pull request is in " + s["resolved"])
     oid = path.rsplit("/commits/", 1)[1].split("?")[0]
     if oid not in state["commits"]:
         fail("no commit " + oid)
     save()
-    print(json.dumps({"files": [{"filename": f} for f in state["commits"][oid]]}))
+    entries = [{"filename": f} if isinstance(f, str) else f for f in state["commits"][oid]]
+    print(json.dumps({"files": entries}))
 elif args[:2] == ["issue", "view"]:
     state = lookup(repo)
     save()
