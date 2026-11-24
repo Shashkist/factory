@@ -141,3 +141,16 @@ in force · factory · 2026-11-24 · revertible
 **Revert.** Set the cap back to 90 in `progress.py` and drop the six title cases of `test_a_listed_link_next_to_a_removed_form_is_kept` in an exam-only commit.
 
 **D11 amendment 1 (review round 1 of #30, 2026-11-24).** "A cut can only remove more" was wrong: cutting at the cap before scrubbing left the head of a form that its rule no longer matched (a 19-character key id, a 31-character token, three IP octets). `clean` now scrubs the whole text first, then cuts, and a cut inside a word drops that partial word before the ellipsis; `render` scrubs again. The 120-character title cap stays.
+
+## D12 · #6 publishes through Learning Factory's existing publisher: no new key, no owner step (owner, 2026-11-24)
+in force · owner · 2026-11-24 · revertible · supersedes the #6 half of D2
+
+**Decision.** The owner asked for #6 sooner and without an owner step. This repository gets **no** production secrets and no server key, and the owner script from D2 is not written. The dashboard's code moves here: the page, the snapshot builder for every connected repository, and their tests. Learning Factory's existing `factory-dashboard.yml` keeps the only publish credentials and publishes, split in two:
+- a **build job with no secrets** checks out this repository at a commit SHA pinned in LF (a pin change is an LF PR), reads both repositories' public GitHub data, and builds the site as an artifact;
+- the **publish job** (LF's `production` environment) only downloads that artifact and copies its files. It runs no code from this repository, so nothing here can reach LF's key.
+
+**Why.** No new key on a shared server and no owner step; the owner's request of 2026-11-24. Running this repository's code only without secrets keeps D2's least-privilege intent.
+
+**Alternatives.** The D2 owner script (a new forced-command key and environment secrets here): needs the owner. A reusable workflow called with `secrets: inherit`: hands LF's root key to code from another repository.
+
+**Revert.** Go back to D2: the owner script, this repository's own `production` environment, and LF stops publishing.
