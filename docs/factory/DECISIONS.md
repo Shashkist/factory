@@ -170,3 +170,11 @@ in force · factory · 2026-11-24 · revertible
 **Alternatives.** A top-level `dashboard/` folder outside the package (the page and builder would version apart); checking out every connected repository in the build job (more checkout steps in LF's workflow for two small files each); splitting the page and the builder into two PRs (the page test needs the new snapshot shape).
 
 **Revert.** Delete `src/factory_tools/dashboard/`; LF keeps building from `labs/factory-dashboard/`.
+
+## D14 · #22: round-2 findings are fixed by the implementer and verified by a fresh reviewer, no third full round
+in force · factory · 2026-11-24 · revertible
+
+**Decision.** Review round 2 of PR #30 (at 2a050b6) found four blocking items (Unicode-aware lookarounds in the scheme, token and IP rules; a raw worker id; event `at` copied raw and able to crash `render`) and one nit. Each has a concrete failing input and a one- or two-line fix. The implementer applies them, adds each failing input as a unit test (not an exam change), and a fresh reviewer checks only those fixes; its verdict is posted as `Review round 2: APPROVE|CHANGES at <new head>` (as LF D148 amendment 3). On CHANGES, the leftovers become a follow-up issue and #30 waits.
+**Why.** The findings are narrow and mechanical; a third full review round would re-read 600 lines to check five regexes. The limit of two rounds stays.
+**Alternatives.** Merge now and open a follow-up (ships known leaks to a public page); a third full round (breaks the two-round limit).
+**Revert.** Close the fix commit's PR head back to 2a050b6 and treat the five items as a follow-up issue.
