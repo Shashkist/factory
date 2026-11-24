@@ -82,7 +82,7 @@ NOW = "2026-11-24T12:00:00Z"
 
 # ---- data -----------------------------------------------------------------------------------------------
 
-def make_world(root: Path, with_third: bool = False) -> tuple[Path, Path]:
+def make_world(root: Path, with_third: bool = False, fa_extra_open: int = 0) -> tuple[Path, Path]:
     fx = root / "fx"
     d = {r: fx / r.replace("/", "__") for r in (LF, FA, CH)}
     for p in d.values():
@@ -103,6 +103,10 @@ def make_world(root: Path, with_third: bool = False) -> tuple[Path, Path]:
         issue(9, "BRAVO nine done", "CLOSED", ["status:done"], created="2026-11-21T01:00:00Z",
               closed="2026-11-21T20:00:00Z", reason="COMPLETED"),
     ])
+    if fa_extra_open:   # factory gets more open issues than the host, so the two repositories and the total all differ
+        extra = [issue(20 + k, f"BRAVO extra {k} ready", "OPEN", ["status:ready", "priority:p2", "phase:1"])
+                 for k in range(fa_extra_open)]
+        write_json(d[FA] / "issues.json", json.loads((d[FA] / "issues.json").read_text(encoding="utf-8")) + extra)
     write_json(d[CH] / "issues.json", [
         issue(3, "CHARLIE three ready", "OPEN", ["status:ready", "priority:p1", "phase:1"]),
     ])
@@ -129,8 +133,8 @@ def make_world(root: Path, with_third: bool = False) -> tuple[Path, Path]:
     return repos, fx
 
 
-def build_world(root: Path, with_third: bool = False):
-    repos, fx = make_world(root, with_third)
+def build_world(root: Path, with_third: bool = False, fa_extra_open: int = 0):
+    repos, fx = make_world(root, with_third, fa_extra_open)
     out = root / "site"
     cwd = root / "cwd"
     cwd.mkdir()
@@ -142,6 +146,11 @@ def build_world(root: Path, with_third: bool = False):
 @pytest.fixture(scope="module")
 def world2(tmp_path_factory):
     return build_world(tmp_path_factory.mktemp("w2"))
+
+
+@pytest.fixture(scope="module")
+def world_counts(tmp_path_factory):
+    return build_world(tmp_path_factory.mktemp("wc"), fa_extra_open=2)
 
 
 @pytest.fixture(scope="module")
@@ -159,6 +168,46 @@ def live(state: str = "running", repos: tuple[str, ...] = (LF, FA, CH)) -> dict:
     return {"generated_at": "2026-11-24T11:59:30+00:00", "schema": 1, "runner": runner,
             "issues": [{"issue": n, "repo": r, "title": t, "station": s} for r in repos for n, t, s in rows[r]],
             "agents": [], "workers": [], "crew": [], "log": []}
+
+
+def shared_live(repos: tuple[str, ...] = (LF, FA)) -> dict:
+    """live.json whose agents, log and crew hold entries of both repositories, in the builder's real shapes:
+    the host's entries carry repo "", another repository's its full name; a crew node's title starts with
+    its repository's short name ("factory#7 ...") or with a bare "#11" for the host."""
+    d = live("running", repos)
+    t0, t1 = "2026-11-24T11:50:00+00:00", "2026-11-24T11:59:00+00:00"
+
+    def sub(name, n, repo, tag, at):
+        return {"station": "build", "substep": f"{tag} {name}", "status": "done", "issue": n, "repo": repo,
+                "started": t0, "at": at, "detail": f"{tag} detail {name}"}
+
+    d["agents"] = [{
+        "id": "agent-mixed", "role": "implementer", "issue": 11, "repo": "", "station": "build", "state": "running",
+        "started": t0, "last": t1,
+        "substeps": [sub("one", 11, "", "ALPHA", "2026-11-24T11:52:00+00:00"),
+                     sub("one", 7, FA, "BRAVO", "2026-11-24T11:54:00+00:00"),
+                     sub("two", 11, "", "ALPHA", "2026-11-24T11:56:00+00:00"),
+                     sub("two", 6, FA, "BRAVO", "2026-11-24T11:58:00+00:00")],
+    }]
+
+    def row(n, repo, tag, k):
+        return {"at": f"2026-11-24T11:5{k}:00+00:00", "issue": n, "repo": repo, "agent": "agent-mixed",
+                "role": "implementer", "station": "build", "substep": f"step {k}", "status": "done",
+                "detail": f"{tag} log row {k}"}
+
+    d["log"] = [row(11, "", "ALPHA", 1), row(7, FA, "BRAVO", 2), row(11, "", "ALPHA", 3), row(6, FA, "BRAVO", 4),
+                {"at": "2026-11-24T11:55:00+00:00", "issue": None, "repo": "", "agent": "manager", "role": "manager",
+                 "station": "plan", "substep": "pass start", "status": "done", "detail": "SHARED log row"}]
+
+    def node(i, title, type_="implementer", kind="agent"):
+        return {"id": i, "kind": kind, "type": type_, "title": title, "state": "busy", "model": "m",
+                "started": t0, "last": t1, "children": []}
+
+    root = node("c0", "manager pass 24", "manager", "session")
+    root["children"] = [node("c1", "#11 ALPHA crew bare"), node("c2", "Learning_factory#11 ALPHA crew prefixed"),
+                        node("c3", "factory#7 BRAVO crew prefixed")]
+    d["crew"] = [root]
+    return d
 
 
 # ---- page runner and DOM helpers ------------------------------------------------------------------------
@@ -539,3 +588,75 @@ def test_c8_every_repository_view_renders_without_unsafe_markup_or_leaks(world2,
         assert step["innerHTML"] == [] and step["style_attr"] == []
         page_text = text(step["page"])
         assert STATE_TEXT not in page_text and not EMAIL_RE.findall(page_text) and not TOKEN_RE.findall(page_text)
+
+
+# ---- review round 1: malformed addresses, shared live data, per-repository counts, a thin entry ----------
+
+@pytest.mark.parametrize("bad", ["#/%", "#/%E0%A4%A", "#/%zz", "#/%25%"])
+def test_r1_a_malformed_address_opens_the_host_repository(world2, tmp_path, bad):
+    # a link cut in the middle of an escape makes decodeURIComponent throw: the page must still open the host
+    step = view(tmp_path, world2[1], hash_=bad, repos=(LF, FA))
+    assert tab_names(step["page"]) == ["Learning_factory", "factory"], "the bar has its tabs"
+    assert_only(step["page"], LF, (FA,))
+
+
+def test_r1_a_malformed_address_still_lets_the_other_tab_be_selected(world2, tmp_path):
+    step = view(tmp_path, world2[1], hash_="#/%E0%A4%A", click="factory", repos=(LF, FA))
+    assert_only(step["page"], FA, (LF,))
+
+
+def view_shared(tmp_path, snap, hash_="", click=None) -> dict:
+    step = {"now": NOW, "live": shared_live()}
+    if click:
+        step["clicks"] = [{"tab": click}]
+    return run_page(tmp_path, snap, [step], hash_)[0]
+
+
+def test_r1_the_host_view_shows_only_the_hosts_agent_steps_log_rows_and_crew_nodes(world2, tmp_path):
+    page = view_shared(tmp_path, world2[1])["page"]
+    main = main_text(page)
+    assert_only(page, LF, (FA,))
+    for need in ("ALPHA one", "ALPHA two", "ALPHA detail one", "ALPHA log row 1", "ALPHA log row 3",
+                 "ALPHA crew bare", "ALPHA crew prefixed", "SHARED log row"):
+        assert need in main, f"{need!r} missing from the Learning_factory Live block"
+    leaks = re.findall(r"BRAVO[ \w]*", main)
+    assert not leaks, f"factory's entries show in the Learning_factory view: {leaks[:6]}"
+
+
+def test_r1_the_other_repositorys_view_shows_only_its_own_agent_steps_log_rows_and_crew_nodes(world2, tmp_path):
+    page = view_shared(tmp_path, world2[1], click="factory")["page"]
+    main = main_text(page)
+    assert_only(page, FA, (LF,))
+    for need in ("BRAVO one", "BRAVO two", "BRAVO detail one", "BRAVO log row 2", "BRAVO log row 4",
+                 "BRAVO crew prefixed", "SHARED log row"):
+        assert need in main, f"{need!r} missing from the factory Live block"
+    leaks = re.findall(r"ALPHA[ \w]*", main)
+    assert not leaks, f"Learning_factory's entries show in the factory view: {leaks[:6]}"
+
+
+def counts_line(page) -> tuple[int, int]:
+    m = re.search(r"(\d+)\s+open,?\s+(\d+)\s+closed", main_text(page))
+    assert m, f"no 'N open, M closed' line in <main>: {main_text(page)[:300]!r}"
+    return int(m.group(1)), int(m.group(2))
+
+
+def test_r1_each_repositorys_counts_line_shows_its_own_open_and_closed(world_counts, tmp_path):
+    snap = world_counts[1]
+    total = (snap["issues"]["open"], snap["issues"]["closed"])
+    assert total == (6, 4), total   # the builder's own data: LF 2 open 1 closed, factory 4 open 3 closed
+    lf = counts_line(view(tmp_path, snap, repos=(LF, FA))["page"])
+    (tmp_path / "fa").mkdir()
+    fa = counts_line(view(tmp_path / "fa", snap, click="factory", repos=(LF, FA))["page"])
+    assert lf == (2, 1), f"Learning_factory counts line shows {lf}"
+    assert fa == (4, 3), f"factory counts line shows {fa}"
+
+
+@pytest.mark.parametrize("click", [None, "factory"])
+def test_r1_a_repository_entry_without_throughput_still_renders_the_rest(world2, tmp_path, click):
+    snap = json.loads(json.dumps(world2[1]))
+    for entry in snap["repos"].values():
+        entry.pop("throughput", None)
+    step = view(tmp_path, snap, click=click, repos=(LF, FA))   # run_page fails on any thrown or swallowed error
+    repo, other = (FA, LF) if click else (LF, FA)
+    assert_only(step["page"], repo, (other,))
+    assert counts_line(step["page"]) == {LF: (2, 1), FA: (2, 3)}[repo]

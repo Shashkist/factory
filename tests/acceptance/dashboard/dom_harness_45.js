@@ -8,6 +8,7 @@
 //  - a click {tab: name} walks the tab bar (any <a>, <button> or [role=tab] inside a <nav> or [role=tablist]),
 //    picks the one whose text holds the name as a whole word, fires its click listeners up the tree and, if
 //    nobody called preventDefault and it is a link to "#...", follows the link;
+//  - an error swallowed by a promise .catch() in the page is reported in `errors` as "swallowed: ...";
 //  - every step also returns `hash` (the address after the step) and `history` (the addresses visited).
 "use strict";
 const fs = require("fs");
@@ -254,6 +255,8 @@ class FakeDate extends Date {
   static now() { return nowMs; }
 }
 
+// a listener that throws is an error of the step, not the end of the run
+function guard(fn) { try { fn(); } catch (e) { flags.errors.push("throw: " + (e && e.message)); } }
 const winListeners = {};
 const visited = [];
 let curHash = scenario.hash || "";
@@ -263,7 +266,7 @@ function setHash(h, fire) {
   if (h === curHash) return;
   curHash = h;
   visited.push(h);
-  if (fire) (winListeners.hashchange || []).forEach((f) => f({ type: "hashchange", newURL: h }));
+  if (fire) (winListeners.hashchange || []).forEach((f) => guard(() => f({ type: "hashchange", newURL: h })));
 }
 const location = {
   get hash() { return curHash; }, set hash(v) { setHash(v, true); },
@@ -297,6 +300,15 @@ sandbox.self = sandbox;
 sandbox.globalThis = sandbox;
 sandbox.addEventListener = (t, f) => { (winListeners[t] = winListeners[t] || []).push(f); };
 const ctx = vm.createContext(sandbox);
+// A promise chain that ends in .catch(handler) swallows its error: the page shows nothing wrong and the exam
+// would see an empty view. Surface it as an error in the step instead ("swallowed: ..."). The page's promises come
+// from this (host) realm, so the patch is on the host's Promise.
+(function () {
+  const oc = Promise.prototype.catch;
+  Promise.prototype.catch = function (f) {
+    return oc.call(this, function (e) { flags.errors.push("swallowed: " + (e && e.message)); return f.apply(this, arguments); });
+  };
+})();
 
 function ser(n) {
   if (n.nodeType === 3) return n.data;
@@ -337,13 +349,13 @@ visited.push(curHash);
         preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; } };
       for (let n = tab; n && n.nodeType === 1 && !ev.stopped; n = n.parentNode) {
         ev.currentTarget = n;
-        for (const f of n.listeners.click || []) f(ev);
+        for (const f of n.listeners.click || []) guard(() => f(ev));
       }
       const a = tab.closest("a");
       if (!ev.defaultPrevented && a && /^#/.test(a.attrs.href || "")) setHash(a.attrs.href, true);
       await flush();
     }
-    if (step.back && visited.length > 1) { visited.pop(); curHash = visited[visited.length - 1]; (winListeners.hashchange || []).forEach((f) => f({ type: "hashchange" })); (winListeners.popstate || []).forEach((f) => f({ type: "popstate" })); await flush(); }
+    if (step.back && visited.length > 1) { visited.pop(); curHash = visited[visited.length - 1]; (winListeners.hashchange || []).forEach((f) => guard(() => f({ type: "hashchange" }))); (winListeners.popstate || []).forEach((f) => guard(() => f({ type: "popstate" }))); await flush(); }
     const live = document.getElementById("live");
     out.steps.push({
       live: live ? ser(live) : null,
