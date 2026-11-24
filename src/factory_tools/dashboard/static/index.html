@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+<title>Factory dashboard</title>
+<link rel="stylesheet" href="styles.css">
+<script src="theme.js"></script>
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Factory dashboard</h1>
+    <p class="muted" id="updated">loading...</p>
+  </div>
+  <button type="button" id="theme-toggle" class="btn" aria-label="Toggle light and dark theme">Theme</button>
+</header>
+
+<main>
+  <section id="live" class="card wide live" aria-label="Live">
+    <h2>Live</h2>
+    <div id="live-body"><p class="muted">waiting for the first live update...</p></div>
+  </section>
+
+  <section class="card wide" aria-label="Pipeline">
+    <h2>Pipeline</h2>
+    <ol class="stations" id="stations">
+      <li data-station="Plan"><span class="dot"></span><b>Plan</b></li>
+      <li data-station="Exam"><span class="dot"></span><b>Exam</b></li>
+      <li data-station="Build"><span class="dot"></span><b>Build</b></li>
+      <li data-station="Check"><span class="dot"></span><b>Check</b></li>
+      <li data-station="Ship"><span class="dot"></span><b>Ship</b></li>
+    </ol>
+    <p id="claim" class="muted">No issue is being worked on.</p>
+  </section>
+
+  <section class="card" aria-label="Queue">
+    <h2>Queue</h2>
+    <p class="muted" id="counts"></p>
+    <ul class="list" id="queue"></ul>
+  </section>
+
+  <section class="card" aria-label="In review">
+    <h2>In review</h2>
+    <ul class="list" id="open-prs"></ul>
+  </section>
+
+  <section class="card" aria-label="Recently shipped">
+    <h2>Recently shipped</h2>
+    <ul class="list" id="merged"></ul>
+  </section>
+
+  <section class="card" aria-label="Waiting for the owner">
+    <h2>Waiting for the owner</h2>
+    <ul class="list" id="owner"></ul>
+  </section>
+
+  <section class="card" aria-label="Decisions">
+    <h2>Decisions</h2>
+    <ul class="list" id="decisions"></ul>
+  </section>
+
+  <section class="card" aria-label="Health">
+    <h2>Health</h2>
+    <ul class="list" id="health"></ul>
+  </section>
+
+  <section class="card" aria-label="Throughput">
+    <h2>Throughput</h2>
+    <div id="spark" role="img" aria-label="Issues closed per day, last 14 days"></div>
+    <p class="muted" id="throughput"></p>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
