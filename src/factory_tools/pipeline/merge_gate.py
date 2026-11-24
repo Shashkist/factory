@@ -53,8 +53,18 @@ def _commit_files(run: claims.Run, repo: str | None, oid: str) -> dict[str, Any]
     placeholder is filled from the current checkout (D17).
     """
     path = f"repos/{repo}/commits/{oid}" if repo else f"repos/{{owner}}/{{repo}}/commits/{oid}"
-    files: dict[str, Any] = json.loads(run(["api", path]))
-    return files
+    # --paginate prints one JSON object per page, concatenated with no separator.
+    text = run(["api", "--paginate", path])
+    decoder = json.JSONDecoder()
+    merged: list[Any] = []
+    pos = 0
+    while pos < len(text):
+        if text[pos].isspace():
+            pos += 1
+            continue
+        page, pos = decoder.raw_decode(text, pos)
+        merged.extend(page.get("files") or [])
+    return {"files": merged}
 
 
 def _commit_reasons(pr: dict[str, Any], run: claims.Run, repo: str | None) -> list[str]:
@@ -63,7 +73,8 @@ def _commit_reasons(pr: dict[str, Any], run: claims.Run, repo: str | None) -> li
     for commit in pr.get("commits") or []:
         oid = commit["oid"]
         files = _commit_files(run, repo, oid)
-        names = [f["filename"] for f in files.get("files", [])]
+        pairs = [(f["filename"], f.get("previous_filename")) for f in files.get("files", [])]
+        names = [n for pair in pairs for n in pair if n]
         if any(_is_exam(n) for n in names) and any(_is_code(n) for n in names):
             reasons.append(f"commit {oid[:7]} changes tests/acceptance together with code")
         if not (names and all(_is_exam(n) for n in names)):
