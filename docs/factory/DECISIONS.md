@@ -178,3 +178,5 @@ in force · factory · 2026-11-24 · revertible
 **Why.** The findings are narrow and mechanical; a third full review round would re-read 600 lines to check five regexes. The limit of two rounds stays.
 **Alternatives.** Merge now and open a follow-up (ships known leaks to a public page); a third full round (breaks the two-round limit).
 **Revert.** Close the fix commit's PR head back to 2a050b6 and treat the five items as a follow-up issue.
+
+**D14 amendment 1 (2026-11-24).** Round-2 finding 3 asked to keep a worker id only when it is exactly 8 hex characters. The older ported exam `test_pass_start_compared_as_datetimes_not_strings` uses the ids `early` and `late` and expects them shown as is, so that rule would weaken nothing but would break an older exam. The id is kept when it is 1 to 12 lowercase ASCII letters or digits (`[a-z0-9]{1,12}`), and hashed with `short_id` otherwise. That still hashes the round-2 leaks (`name.surname`, a `ghp_` value: a dot, an underscore or more than 12 characters). The scheme lookbehind is `(?<![a-z+.-])` (no digits), so `1sftp://host/x` is redacted too.
