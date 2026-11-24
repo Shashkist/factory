@@ -171,11 +171,11 @@ BACKOFF_S = 90  # after a failed push, wait this long before trying again
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
 _SLUG = re.compile(r"^[\w .:/#()+\-]{1,60}$", re.UNICODE)
 _SCRUB_FIXED = [
-    (re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])"), "<ip>"),
+    (re.compile(r"(?<!\d\.)(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\.?\d)"), "<ip>"),
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "<email>"),
     # any other scheme (sftp, smb, file, s3, ssh, redis ...); http(s) is decided by `other` below
     (re.compile(r"(?<![a-z+.-])(?!https?://)[a-z][a-z0-9+.-]*://\S*", re.IGNORECASE), "<url>"),
-    (re.compile(r"(?<![:/\w])//[\w.-]+\S*"), "<url>"),  # scheme-relative //host/x
+    (re.compile(r"(?<![\w/])(?<![A-Za-z]:)//[\w.-]+\S*"), "<url>"),  # scheme-relative //host/x
     # UNC: two slashes of either kind, at least one a backslash, then the host
     (re.compile(r"(?:\\[\\/]|/\\)[^\s\\/]+(?:[\\/]\S*)?"), "<path>"),
     (re.compile(r"(?<![A-Z0-9])A(?:KI|SI)A[0-9A-Z]{16}(?![A-Z0-9])"), "<redacted>"),
@@ -400,9 +400,10 @@ def _event_time(v: object) -> str | None:
     if not isinstance(v, str):
         return None
     try:
-        return parse(v).isoformat()
+        t = parse(v)
     except ValueError:
         return None
+    return (t if t.tzinfo else t.replace(tzinfo=UTC)).isoformat()  # naive means UTC
 
 
 def render(events: list[dict[str, Any]]) -> dict[str, Any]:

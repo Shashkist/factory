@@ -52,3 +52,30 @@ def test_good_at_is_written_back_normalised() -> None:
 
 def test_clean_keeps_whole_words_when_cut_follows_a_space() -> None:
     assert progress.clean("aaa bbb ccc", 9) == "aaa bbb…"
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("server 10.0.0.5.", "server <ip>."),
+        ("host 10.0.0.5. Then", "host <ip>. Then"),
+    ],
+)
+def test_ip_before_a_full_stop_is_scrubbed(text: str, want: str) -> None:
+    assert progress.scrub(text) == want
+
+
+def test_naive_event_times_are_taken_as_utc_and_render_never_raises() -> None:
+    start = {"kind": "pass-start", "at": "2026-11-24T10:00:00+00:00", "pass_no": 1}
+    end = {"kind": "pass-end", "at": "2026-11-24T10:05:00", "result": "ok"}
+    out = progress.render([start, end])
+    assert out["runner"]["pass_ended"] == "2026-11-24T10:05:00+00:00"
+    naive = {"kind": "pass-start", "at": "2026-11-24T10:00:00", "pass_no": 1}
+    worker = {"kind": "worker", "at": "2026-11-24T10:01:00", "worker": "early", "event": "idle"}
+    progress.render([naive, worker])
+
+
+@pytest.mark.parametrize("text", [HE + "://fileserver/share", "1://host/x", "_://host/x"])
+def test_non_letter_scheme_does_not_let_the_host_through(text: str) -> None:
+    out = progress.scrub(text)
+    assert "fileserver" not in out and "host" not in out
