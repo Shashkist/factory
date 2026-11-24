@@ -47,15 +47,13 @@ def _verdicts(comments: list[dict[str, Any]], author: str) -> list[tuple[int, st
 
 
 def _commit_files(run: claims.Run, repo: str | None, oid: str) -> dict[str, Any]:
-    """The commit as `gh api` returns it: the full repository path, else `-R` on the placeholder."""
-    placeholder = f"repos/{{owner}}/{{repo}}/commits/{oid}"
-    path = f"repos/{repo}/commits/{oid}" if repo else placeholder
-    try:
-        files: dict[str, Any] = json.loads(run(["api", path]))
-    except RuntimeError:
-        if not repo:
-            raise
-        files = json.loads(run(["api", placeholder, "-R", repo]))
+    """The commit as `gh api` returns it.
+
+    `gh api` has no `-R`: the repository is named in the path, or the `{owner}/{repo}`
+    placeholder is filled from the current checkout (D17).
+    """
+    path = f"repos/{repo}/commits/{oid}" if repo else f"repos/{{owner}}/{{repo}}/commits/{oid}"
+    files: dict[str, Any] = json.loads(run(["api", path]))
     return files
 
 

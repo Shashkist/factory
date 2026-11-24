@@ -32,18 +32,19 @@ def test_verdicts_use_first_line_and_author_only():
     assert merge_gate._verdicts(comments, "a") == [(2, "APPROVE", SHORT)]
 
 
-def test_commit_files_falls_back_to_dash_r_when_the_full_path_fails():
+def test_commit_files_names_the_repository_in_the_path_never_dash_r():
     calls: list[list[str]] = []
 
     def run(args: list[str]) -> str:
         calls.append(args)
-        if "-R" not in args:
-            raise RuntimeError("no")
         return json.dumps({"files": []})
 
     assert merge_gate._commit_files(run, "o/r", "abc") == {"files": []}
-    assert calls[0] == ["api", "repos/o/r/commits/abc"]
-    assert calls[1] == ["api", "repos/{owner}/{repo}/commits/abc", "-R", "o/r"]
+    assert merge_gate._commit_files(run, None, "abc") == {"files": []}
+    assert calls == [
+        ["api", "repos/o/r/commits/abc"],
+        ["api", "repos/{owner}/{repo}/commits/abc"],
+    ]
 
 
 def test_commit_files_without_repo_raises_on_failure():
