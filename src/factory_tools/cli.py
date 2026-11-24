@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from factory_tools import claims, profile
+from factory_tools import claims, profile, progress
 
 
 def _profile_check(args: argparse.Namespace) -> int:
@@ -33,6 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("path", nargs="?", default=profile.DEFAULT_PATH)
     check.set_defaults(func=_profile_check)
     claims.add_commands(groups)
+
+    prog = groups.add_parser("progress", help="live progress and the crew view", add_help=False)
+    prog.add_argument("args", nargs=argparse.REMAINDER)
+    prog.set_defaults(func=lambda a: progress.run(a.args))
     return parser
 
 
