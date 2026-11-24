@@ -131,3 +131,11 @@ in force · factory · 2026-11-24 · revertible
 **Why.** The agents are small and self-contained and establish the plugin layout and the validation test; the skill depends on that layout and needs the renderer; the document describes both.
 **Alternatives.** One PR for #4 (skill, agents, renderer, docs and the paragraph checklist together are too large to review well); skill first (the validation and forbidden-words tests would land with the larger piece).
 **Revert.** Close #27 to #29 and build #4 as one piece.
+
+## D11 · #22: issue titles on the live page are capped at 120 characters, not 90
+in force · factory · 2026-11-24 · revertible
+
+**Finding.** #22's exam keeps a listed repository link on both sides of each removed form in the issue title. For the longer forms that is about 105 characters; with the 90-character cap the second link is cut mid-URL and redacted to `<url>`, so no implementation can pass the exam.
+**Decision.** `progress add` caps the title at 120 characters (as the runner note already is). Scrubbing runs in `render` on the stored, already capped text, so a cut can only remove more, never leak a half form. No older exam pins 90.
+**Alternatives.** Shorten the exam's cases (weakens the "listed link next to a removed form" guard for titles); scrub before the cut (a cut could then split a listed link anyway).
+**Revert.** Set the cap back to 90 in `progress.py` and drop the six title cases of `test_a_listed_link_next_to_a_removed_form_is_kept` in an exam-only commit.
