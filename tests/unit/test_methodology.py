@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from factory_tools import methodology
-from factory_tools.profile import Limits, OwnerFiles, Profile, Smoke, VerifyGroup
+from factory_tools.profile import Limits, OwnerFiles, Planning, Profile, Smoke, VerifyGroup
 
 
 def test_defaults_are_the_documented_ones() -> None:
@@ -61,3 +61,31 @@ def test_run_invalid_profile_exits_1(tmp_path: Path) -> None:
     f = tmp_path / "p.yaml"
     f.write_text("methodology: '0.1'\nbogus: 1\n", encoding="utf-8")
     assert methodology.run(str(f)) == 1
+
+
+def test_planning_off_and_on_are_printed() -> None:
+    assert "- off" in methodology.render_profile(Profile(methodology="0.1"))
+    on = methodology.render_profile(
+        Profile(methodology="0.1", planning=Planning(spec="docs/spec.md", keep_ready=7))
+    )
+    assert "spec `docs/spec.md`" in on and "keep_ready: 7" in on
+
+
+def test_labels_are_printed() -> None:
+    p = Profile(methodology="0.1", labels={"ready": "status:ready"})
+    assert "- ready: `status:ready`" in methodology.render_profile(p)
+    assert "own label names" in methodology.render_profile(Profile(methodology="0.1"))
+
+
+def test_command_with_backtick_is_a_valid_code_span() -> None:
+    p = Profile(methodology="0.1", verify={"a": VerifyGroup(run=("echo `date`",), cwd=".")})
+    assert "  - `` echo `date` ``" in methodology.render_profile(p)
+
+
+def test_problem_lines_carry_the_profile_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    f = tmp_path / "p.yaml"
+    f.write_text("methodology: '0.1'\nbogus: 1\n", encoding="utf-8")
+    assert methodology.run(str(f)) == 1
+    assert capsys.readouterr().out.startswith(f"{f}: bogus: ")

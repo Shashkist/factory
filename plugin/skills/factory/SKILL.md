@@ -52,11 +52,11 @@ A red CI on the default branch, a failed deploy or a failed smoke run comes firs
 
 ## 2 - Plan
 
-Fewer ready issues than the project keeps ready (see the profile's planning section; default 5)? Slice more from the spec (phase order, dependencies first). Each issue says: the goal, testable acceptance criteria, `Depends on #n`, the spec section, and type, priority, phase and ready labels. Keep each issue to one PR of about 400 lines or less.
+Only when the project's planning is on (see "Planning" under "This project"; it is off by default, and then you slice nothing): fewer ready issues than its `keep_ready`? Slice more from its spec path (phase order, dependencies first). Each issue says: the goal, testable acceptance criteria, `Depends on #n`, the spec section, and type, priority, phase and ready labels. Keep each issue to one PR of about 400 lines or less.
 
 ## 3 - Pick and claim
 
-The highest priority ready issue whose dependencies are closed, in any repository of the list. Highest priority first (p0, then p1, p2, p3), oldest first within a priority. Leave out claimed issues and those with an open dependency.
+The highest priority ready issue whose dependencies are closed, in any repository of the list. An incident p0 comes first, then other p0, then p1, p2, p3, oldest first within a priority. Leave out claimed issues and those with an open dependency.
 
 ```bash
 factory-tools claim <n> --repo <repo> --session <you> --branch f/<n>-<slug> --step 'reading the issue'
@@ -65,10 +65,10 @@ git checkout -b f/<n>-<slug>
 
 Update the state file (what is in flight, by repository) and commit it straight to the default branch as a state update.
 
-**Work in parallel: up to 3 issues in flight** (the limit `parallel_issues`). Whenever one issue is waiting (CI, a reviewer, an agent running in the background), claim the next independent one instead of idling.
+**Work in parallel: up to 3 issues in flight by default** (the limit `parallel_issues`). Whenever one issue is waiting (CI, a reviewer, an agent running in the background), claim the next independent one instead of idling.
 - **Independent** means no `Depends on` between them and no overlap in the code they will change. Issues in different repositories never overlap in code, but a cross-repository `Depends on` still orders them.
 - Each issue gets its own claim, branch and worktree. The limit counts all repositories together.
-- An issue of another repository is built in a worktree of that repository's clone. Its `gh` calls pass `-R <repo>`, its `factory-tools` calls pass `--repo <repo>`, and that repository's own `CLAUDE.md`, decisions file and owner file apply.
+- An issue of another repository is built in a worktree of that repository's clone. Its `gh` calls pass `-R <repo>`, its `factory-tools` calls pass `--repo <repo>`, and that repository's own `CLAUDE.md`, decisions file and owner file apply. Render that repository's own profile, `factory-tools methodology render --profile <that clone>/.factory/factory.yaml`, and use the documented defaults when it has none; its own verify commands and limits apply.
 - Pass `--issue <n>` on every progress step, so each task shows as its own lane.
 - Merges stay one at a time: rebase onto the new default branch, then wait for green CI again.
 - Stop starting new issues once about 75 of the ~90 minutes are used; finish or park what is in flight.
@@ -81,7 +81,7 @@ For every open question: the spec says, then the decisions file says, then resea
 
 ## 5 - Exam, build, check (make, check, fix)
 
-1. The exam comes before code. Dispatch the `exam-writer` agent with the issue and the spec sections. It commits acceptance tests under the exam globs printed under "This project", in the repository the issue belongs to.
+1. The exam comes before code. Dispatch the `exam-writer` agent with the issue and the spec sections. It commits acceptance tests under the exam globs of the repository the issue belongs to (the ones printed under "This project", or from that repository's own rendered profile).
 2. Dispatch the `implementer` agent (worktree) with the issue, the exam and the relevant rules. It makes everything pass locally.
 3. Push and open a PR: title `feat(area): ... (#n)`, body = what / why / how verified / `Closes #n`. Label the issue in-review.
 4. Wait for CI: `gh pr checks <pr> --watch`. Red goes back to the implementer with the exact failure. At most the limit `ci_rounds` rounds.
@@ -113,7 +113,7 @@ gh issue edit <n> -R <repo> --add-label done --remove-label in-review
 factory-tools release <n> --repo <repo> --session <you> --reason shipped
 ```
 
-(Use the project's own label names; the profile's `labels` key maps them.) Update the state file (in flight to recently done, next) and append a short history entry if something was learned. Commit straight to the default branch.
+(Use the project's own label names: the "Labels" list under "This project" maps the Factory's names to them.) Update the state file (in flight to recently done, next) and append a short history entry if something was learned. Commit straight to the default branch.
 
 ## 8 - Loop or stop
 
