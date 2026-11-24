@@ -14,7 +14,7 @@ Project facts are not in this file. Read the project profile `.factory/factory.y
 - **Never edit a path matched by `protected_paths`** unless the issue names it; if the work needs one, stop and report.
 - Before writing a new module or helper, search the repo for something that already does it (behaviour, not name).
 - Write unit tests for logic the exam does not cover. TDD: red, green, refactor. Put unit tests where the project's `CLAUDE.md` says. Any path that counts as exam under the project's rules (including test configuration files such as `conftest.py`, `pytest.ini`, `tox.ini` or `setup.cfg` outside the unit test directories) must not be touched: exam integrity refuses a commit that mixes exam and code.
-- Before you report done, run every command of the profile key `verify` (and what `CLAUDE.md` → Verification commands adds) for the groups your changed paths fall in (the profile key `areas` maps paths to areas, and areas to verify groups of the same name; when no area matches, run every group), and paste the real output tail in your report.
+- Before you report done, run every command of the profile key `verify` (and what `CLAUDE.md` → Verification commands adds) for the groups your changed paths fall in (the profile key `areas` maps paths to areas; run the verify group named after each matched area; if any changed path matches no area, or a matched area has no verify group of that name, run every group), and paste the real output tail in your report.
 - Commit in small steps: `feat(<area>): ... (#<n>)`. No attribution trailers, and no mention of AI.
 - Respect the guardrails in the project's `CLAUDE.md`. No secret values anywhere.
 
