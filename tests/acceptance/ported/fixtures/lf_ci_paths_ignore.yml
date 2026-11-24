@@ -1,0 +1,16 @@
+# Fixture: lines 1-13 of Learning Factory .github/workflows/ci.yml at commit ae1057b762d1,
+# copied verbatim below this header (Shashkist/Learning_factory, main).
+# The ported test reads the docs-ignore block from here, not from this repo CI.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    # Docs-only pushes run no CI (#271). Keep in step with DOCS_ONLY in scripts/ci_paths.py:
+    # Deploy treats exactly these paths as docs when it compares code trees. PRs stay unfiltered.
+    paths-ignore:
+      - "docs/**"
+      - "courses/**"
+      - ".claude/**"
+      - "history.md"
