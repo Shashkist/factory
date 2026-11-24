@@ -222,3 +222,16 @@ Every ported file starts with a "Ported from ... 29e3bf3" comment listing what w
 **Why.** The live page at factory.shashkist.com had no behaviour exam since LF #571; the cases are ported where the page lives.
 **Alternatives.** Port LF's #51 and #68 harnesses as well (three near-identical fake browsers); port the reducer cases a second time (duplicates `ported/test_factory_progress.py`).
 **Revert.** Delete the ported page files and `dom_harness_481.js`.
+
+## D19 · #45: how the per-repository dashboard is addressed and split
+in force · factory · 2026-11-24 · revertible
+
+**Decision.** The exam of #45 (a683711) fixes these choices:
+- The bar is a `<nav>` with one tab per repository in data order; the selected tab carries `aria-current`; each tab shows a count.
+- The address is the hash `#/<short name>` (for example `#/factory`); a click sets it, a reload keeps it, back returns. No hash, or an unknown name, opens the host repository, which is the first repository listed in the data (the data names no host; the page already took the first key as host).
+- The laptop runner's state (running or idle, pass, last check) sits outside `<main>`, on every view.
+- Every block inside `<main>` shows the selected repository only, including throughput (lead time per repository) and the pipeline claim (per repository). The snapshot keeps its top-level `claim` for the older #6 exam and adds the per-repository data next to it.
+- #44 (an idle runner still shows live lanes) is not folded in; it stays its own issue.
+**Why.** A hash address works on a static page with no server routing; the first-listed host matches today's page; per-repository throughput and claim follow from "every block shows only the selected repository".
+**Alternatives.** `?repo=` (a reload refetches the page, no gain); a host flag in `repos.yaml` (a data change for one bit the order already gives); fold #44 (a larger PR for a separate defect).
+**Revert.** Drop the bar and the hash routing; the page shows both repositories mixed as before #45.
