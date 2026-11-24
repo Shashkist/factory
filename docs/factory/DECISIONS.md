@@ -154,3 +154,19 @@ in force · owner · 2026-11-24 · revertible · supersedes the #6 half of D2
 **Alternatives.** The D2 owner script (a new forced-command key and environment secrets here): needs the owner. A reusable workflow called with `secrets: inherit`: hands LF's root key to code from another repository.
 
 **Revert.** Go back to D2: the owner script, this repository's own `production` environment, and LF stops publishing.
+
+## D13 · #6: the dashboard is the package `factory_tools.dashboard`, built by `python -m factory_tools.dashboard build`
+in force · factory · 2026-11-24 · revertible
+
+**Decision.** The factory-side half of #6 (criteria 1, 3 and 4) is one PR; the Learning Factory half (criteria 2 and 5: the pinned checkout in LF's `factory-dashboard.yml`) is a paired LF issue that depends on #6.
+- Code: `src/factory_tools/dashboard/` holds the snapshot builder ported from LF's `labs/factory-dashboard/build_snapshot.py` and the page (`index.html`, `app.js`, `styles.css`, `theme.js`) under `static/` as package data.
+- Entry point: `python -m factory_tools.dashboard build --repos <repos.yaml> --out <dir> [--fixtures <dir>] [--now <iso>]` writes `<dir>/snapshot.json` and copies the page next to it. `--repos` reads LF's `docs/factory/repos.yaml` format (a list of `- repo: owner/name`; other keys ignored). It needs no secret: only public GitHub data through `gh` with the token the job already has.
+- Per repository, `DECISIONS.md` and `OWNER.md` are read from `docs/factory/` of that repository's default branch through the public contents API (in fixtures mode from `<fixtures>/<owner>__<name>/`). `STATE.md` is never read: the public build never published it (LF D14).
+- The snapshot keeps LF's current shape, and every lane, issue row, PR, run, decision and owner item carries `repo`; counts are also given per repository. The page shows a repository tag on every lane and issue row.
+- The PR is larger than the ~400-line guide because most of it is LF code moved as is; the reviewer compares it with LF's source.
+
+**Why.** One importable package with its page as package data is what a pinned checkout can run in a job with no secrets (D12); the contents API keeps the build to public data without checking out every repository.
+
+**Alternatives.** A top-level `dashboard/` folder outside the package (the page and builder would version apart); checking out every connected repository in the build job (more checkout steps in LF's workflow for two small files each); splitting the page and the builder into two PRs (the page test needs the new snapshot shape).
+
+**Revert.** Delete `src/factory_tools/dashboard/`; LF keeps building from `labs/factory-dashboard/`.
