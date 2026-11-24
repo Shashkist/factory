@@ -171,10 +171,10 @@ BACKOFF_S = 90  # after a failed push, wait this long before trying again
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
 _SLUG = re.compile(r"^[\w .:/#()+\-]{1,60}$", re.UNICODE)
 _SCRUB_FIXED = [
-    (re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"), "<ip>"),
+    (re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])"), "<ip>"),
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "<email>"),
     # any other scheme (sftp, smb, file, s3, ssh, redis ...); http(s) is decided by `other` below
-    (re.compile(r"(?<![\w+.-])(?!https?://)[a-z][a-z0-9+.-]*://\S*", re.IGNORECASE), "<url>"),
+    (re.compile(r"(?<![a-z+.-])(?!https?://)[a-z][a-z0-9+.-]*://\S*", re.IGNORECASE), "<url>"),
     (re.compile(r"(?<![:/\w])//[\w.-]+\S*"), "<url>"),  # scheme-relative //host/x
     # UNC: two slashes of either kind, at least one a backslash, then the host
     (re.compile(r"(?:\\[\\/]|/\\)[^\s\\/]+(?:[\\/]\S*)?"), "<path>"),
@@ -182,7 +182,7 @@ _SCRUB_FIXED = [
 ]
 _SCRUB_PATHS = [
     (re.compile(r"(?:[A-Za-z]:\\|/(?:root|home|Users|etc|var|tmp|opt|srv|c)/)\S*"), "<path>"),
-    (re.compile(r"\b[A-Za-z0-9_\-]{32,}\b"), "<redacted>"),
+    (re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])"), "<redacted>"),
 ]
 
 
@@ -237,7 +237,7 @@ def clean(text: str, limit: int = DETAIL_MAX) -> str:
     if len(text) <= limit:
         return text
     cut = text[: limit - 1]
-    if not text[limit - 1].isspace():
+    if not cut[-1:].isspace() and not text[limit - 1].isspace():
         # the cut is inside a word: drop it whole, so no head of a key, token or address is left
         cut = cut.rsplit(None, 1)[0] if cut.split(None, 1)[1:] else ""
     return cut.rstrip() + "…"
@@ -318,7 +318,7 @@ def _typed_worker_event(e: dict[str, Any]) -> dict[str, Any]:
     wid, role, tool = str(e.get("worker", "")), e.get("role"), e.get("tool")
     return {
         **e,
-        "worker": scrub(wid) if re.fullmatch(r"[\w.-]{1,40}", wid) else short_id(wid),
+        "worker": wid if re.fullmatch(r"[a-z0-9]{1,12}", wid) else short_id(wid),
         "role": role if role in (*WORKER_ROLES, "agent") else "agent",
         "tool": tool if tool in _TOOL_NAMES else "Other",
     }
@@ -395,14 +395,27 @@ def render_crew(at: datetime) -> list[dict[str, Any]]:
         return []
 
 
+def _event_time(v: object) -> str | None:
+    """The normalised time of an event, None when it is not an ISO time (the event is dropped)."""
+    if not isinstance(v, str):
+        return None
+    try:
+        return parse(v).isoformat()
+    except ValueError:
+        return None
+
+
 def render(events: list[dict[str, Any]]) -> dict[str, Any]:
     # the redaction boundary: step events of a repository that is not on the allowlist are dropped,
     # names normalised
     evs = [
-        {**e, "repo": lane_repo(e.get("repo"))} if e.get("kind") == "step" else e
+        {**e, "at": at, **({"repo": lane_repo(e.get("repo"))} if e.get("kind") == "step" else {})}
         for e in current_pass(events)
-        if e.get("kind") != "step"
-        or (lane_repo(e.get("repo")) is not None and e.get("status") in STATUSES)
+        if (at := _event_time(e.get("at"))) is not None
+        and (
+            e.get("kind") != "step"
+            or (lane_repo(e.get("repo")) is not None and e.get("status") in STATUSES)
+        )
     ]
     t = now()
     runner = {
