@@ -208,3 +208,17 @@ in force · factory · 2026-11-24 · revertible
 **Why.** An exam that rewards a call the real tool rejects proves nothing; the fix makes the fake match the real `gh` and does not loosen any case (no case asserts `-R` on `api`).
 **Alternatives.** Keep the fallback (dead code on the real `gh`, and a hidden second read path); pass `GH_REPO` in the environment (the fake ignores it, the same exam change is needed).
 **Revert.** Restore the fake's `-R`-only resolution and the fallback call.
+
+## D18 · #42: how Learning Factory's page exams are ported, and which cases stay behind
+in force · factory · 2026-11-24 · revertible
+
+**Decision.** The page cases LF removed in #571 (LF D150) are ported to `tests/acceptance/ported/` from LF commit 29e3bf3, changing only paths and names, with these adaptations and omissions:
+1. **Harness.** The #51, #68 state and #68 lanes cases run on `tests/acceptance/dashboard/dom_harness_6.js` (the #68 harness plus snapshot and page output). #481 keeps a copy of LF's `dom_harness_481.js`, which serves `snapshot.json` per step. Node is required, never skipped.
+2. **Worker ids in the #51 fixtures.** The package reducer hashes a worker id that does not match `[a-z0-9]{1,12}` (D14 amendment 1), LF's did not. The fixture ids `w-mgr`, `w-exam`, `w-impl`, `w-rev` become `wmgr`, `wexam`, `wimpl`, `wrev`; every assertion is unchanged.
+3. **Reducer-only and script-only cases are not ported** (#68 state: 9; #68 lanes: 2; #487: 2; #504: 4; #551: 3 redaction cases): the reducer is checked by `ported/test_factory_progress.py` and #22's redaction exam. Deploy cases (#51: 3 nginx cases; #19 and #18: installer, nginx, builder and workflow cases) test LF's deployment, not this page.
+4. **Three LF #18 builder cases are added** (LF D150 amendment 1): in-progress claim wins over in-review, fallback to an in-review claim, open-incident throughput. They run `python -m factory_tools.dashboard build --repos --fixtures --now` on LF's `issue18` fixtures copied to `ported/fixtures/issue18/`; assertions unchanged (the package adds `repo` to the claim, which they ignore).
+5. **Repository tags.** No case needed adapting: with no `repos` in the snapshot the page falls back to an empty repository prefix, so lane labels stay `#86`. The `factory#7` form stays covered by #6 c3.
+Every ported file starts with a "Ported from ... 29e3bf3" comment listing what was left out. The page passed every ported case, so no page fix follows.
+**Why.** The live page at factory.shashkist.com had no behaviour exam since LF #571; the cases are ported where the page lives.
+**Alternatives.** Port LF's #51 and #68 harnesses as well (three near-identical fake browsers); port the reducer cases a second time (duplicates `ported/test_factory_progress.py`).
+**Revert.** Delete the ported page files and `dom_harness_481.js`.
