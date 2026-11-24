@@ -1,0 +1,13 @@
+{
+  "comments": [
+    {
+      "id": "IC_1",
+      "author": {
+        "login": "someone"
+      },
+      "body": "<!-- pulsesign-issue-claim\n{\n  \"branch\": \"f/16-in-review-one\",\n  \"claimed\": \"2026-11-14T07:00:00+00:00\",\n  \"heartbeat\": \"2026-11-14T11:45:00+00:00\",\n  \"session\": \"lf-r9x1\",\n  \"step\": \"waiting for review\",\n  \"worktree\": \"\"\n}\n-->\n**Claimed by `lf-r9x1`**\n",
+      "createdAt": "2026-11-14T08:00:00Z",
+      "url": "https://github.com/example/factory/issues/16#issuecomment-1"
+    }
+  ]
+}

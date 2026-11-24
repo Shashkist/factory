@@ -1,0 +1,47 @@
+[
+  {
+    "number": 21,
+    "title": "Merged older",
+    "state": "MERGED",
+    "url": "https://github.com/example/factory/pull/21",
+    "mergedAt": "2026-11-12T10:00:00Z",
+    "headRefName": "f/x",
+    "isDraft": false
+  },
+  {
+    "number": 23,
+    "title": "Merged newest",
+    "state": "MERGED",
+    "url": "https://github.com/example/factory/pull/23",
+    "mergedAt": "2026-11-14T09:00:00Z",
+    "headRefName": "f/x",
+    "isDraft": false
+  },
+  {
+    "number": 22,
+    "title": "Merged middle",
+    "state": "MERGED",
+    "url": "https://github.com/example/factory/pull/22",
+    "mergedAt": "2026-11-13T09:00:00Z",
+    "headRefName": "f/x",
+    "isDraft": false
+  },
+  {
+    "number": 24,
+    "title": "Open one",
+    "state": "OPEN",
+    "url": "https://github.com/example/factory/pull/24",
+    "mergedAt": null,
+    "headRefName": "f/16-x",
+    "isDraft": false
+  },
+  {
+    "number": 25,
+    "title": "Closed without merge",
+    "state": "CLOSED",
+    "url": "https://github.com/example/factory/pull/25",
+    "mergedAt": null,
+    "headRefName": "f/x",
+    "isDraft": false
+  }
+]

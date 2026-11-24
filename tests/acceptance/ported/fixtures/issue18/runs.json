@@ -1,0 +1,65 @@
+[
+  {
+    "databaseId": 101,
+    "workflowName": "CI",
+    "status": "completed",
+    "conclusion": "failure",
+    "headBranch": "main",
+    "createdAt": "2026-11-14T08:00:00Z",
+    "url": "https://github.com/example/factory/actions/runs/101"
+  },
+  {
+    "databaseId": 105,
+    "workflowName": "Smoke",
+    "status": "completed",
+    "conclusion": "failure",
+    "headBranch": "main",
+    "createdAt": "2026-11-14T07:00:00Z",
+    "url": "https://github.com/example/factory/actions/runs/105"
+  },
+  {
+    "databaseId": 102,
+    "workflowName": "CI",
+    "status": "completed",
+    "conclusion": "success",
+    "headBranch": "main",
+    "createdAt": "2026-11-14T10:00:00Z",
+    "url": "https://github.com/example/factory/actions/runs/102"
+  },
+  {
+    "databaseId": 103,
+    "workflowName": "Deploy",
+    "status": "in_progress",
+    "conclusion": "",
+    "headBranch": "main",
+    "createdAt": "2026-11-14T11:00:00Z",
+    "url": "https://github.com/example/factory/actions/runs/103"
+  },
+  {
+    "databaseId": 104,
+    "workflowName": "Deploy",
+    "status": "completed",
+    "conclusion": "success",
+    "headBranch": "main",
+    "createdAt": "2026-11-13T11:00:00Z",
+    "url": "https://github.com/example/factory/actions/runs/104"
+  },
+  {
+    "databaseId": 106,
+    "workflowName": "Smoke",
+    "status": "completed",
+    "conclusion": "success",
+    "headBranch": "main",
+    "createdAt": "2026-11-13T07:00:00Z",
+    "url": "https://github.com/example/factory/actions/runs/106"
+  },
+  {
+    "databaseId": 107,
+    "workflowName": "CI",
+    "status": "completed",
+    "conclusion": "failure",
+    "headBranch": "f/20-feature",
+    "createdAt": "2026-11-14T11:30:00Z",
+    "url": "https://github.com/example/factory/actions/runs/107"
+  }
+]
