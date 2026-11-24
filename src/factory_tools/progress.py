@@ -173,10 +173,12 @@ _SLUG = re.compile(r"^[\w .:/#()+\-]{1,60}$", re.UNICODE)
 _SCRUB_FIXED = [
     (re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"), "<ip>"),
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "<email>"),
-    (re.compile(r"\bftp://\S+", re.IGNORECASE), "<url>"),
+    # any other scheme (sftp, smb, file, s3, ssh, redis ...); http(s) is decided by `other` below
+    (re.compile(r"(?<![\w+.-])(?!https?://)[a-z][a-z0-9+.-]*://\S*", re.IGNORECASE), "<url>"),
     (re.compile(r"(?<![:/\w])//[\w.-]+\S*"), "<url>"),  # scheme-relative //host/x
-    (re.compile(r"\\\\[^\s\\]+(?:\\\S*)?"), "<path>"),  # UNC, two backslashes then host
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "<redacted>"),
+    # UNC: two slashes of either kind, at least one a backslash, then the host
+    (re.compile(r"(?:\\[\\/]|/\\)[^\s\\/]+(?:[\\/]\S*)?"), "<path>"),
+    (re.compile(r"(?<![A-Z0-9])A(?:KI|SI)A[0-9A-Z]{16}(?![A-Z0-9])"), "<redacted>"),
 ]
 _SCRUB_PATHS = [
     (re.compile(r"(?:[A-Za-z]:\\|/(?:root|home|Users|etc|var|tmp|opt|srv|c)/)\S*"), "<path>"),
@@ -192,7 +194,8 @@ def _scrub_rules(repos: tuple[str, ...]) -> list[tuple[re.Pattern[str], str]]:
     own = r"(?!(?:[\w-]+\.)*shashkist\.com(?::\d+)?(?:[/?#\s]|$))"
     other = re.compile(rf"https?://{ok}{own}\S+", re.IGNORECASE)
     traversal = re.compile(
-        r"(?:https?://|\bgithub\.com/)\S*(?:/\.\.|%2e|%252e|%5c|%2f|\\|．|｡|。|&#46;)\S*",
+        r"(?:https?://|\bgithub\.com/)\S*"
+        r"(?:/\.\.|%2e|%25|%5c|%2f|%c0%ae|\\|&#0*46;|&#x0*2e;|/[．｡。])\S*",
         re.IGNORECASE,
     )
     bare = re.compile(rf"\bgithub\.com/{listed}\S+", re.IGNORECASE)
@@ -229,8 +232,15 @@ def events_path() -> Path:
 
 def clean(text: str, limit: int = DETAIL_MAX) -> str:
     """Untrusted text: no control characters, capped. The page renders it as text only."""
-    text = _CTRL.sub(" ", text or "").strip()
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+    # scrubbed before the cut (whole forms become placeholders), and again by `render`
+    text = scrub(_CTRL.sub(" ", text or "").strip())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    if not text[limit - 1].isspace():
+        # the cut is inside a word: drop it whole, so no head of a key, token or address is left
+        cut = cut.rsplit(None, 1)[0] if cut.split(None, 1)[1:] else ""
+    return cut.rstrip() + "…"
 
 
 def scrub(text: str) -> str:
@@ -300,11 +310,30 @@ def hook_event(payload: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+_TOOL_NAMES = {*TOOL_CATEGORIES.values(), "MCP", "Other"}
+
+
+def _typed_worker_event(e: dict[str, Any]) -> dict[str, Any]:
+    """A worker event from the file, with its free fields held to their allowlists."""
+    wid, role, tool = str(e.get("worker", "")), e.get("role"), e.get("tool")
+    return {
+        **e,
+        "worker": scrub(wid) if re.fullmatch(r"[\w.-]{1,40}", wid) else short_id(wid),
+        "role": role if role in (*WORKER_ROLES, "agent") else "agent",
+        "tool": tool if tool in _TOOL_NAMES else "Other",
+    }
+
+
+def _int_or_none(v: object) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
 def render_workers(evs: list[dict[str, Any]], at: datetime) -> list[dict[str, Any]]:
     workers: dict[str, dict[str, Any]] = {}
     for e in evs:
         if e.get("kind") != "worker":
             continue
+        e = _typed_worker_event(e)
         w = workers.setdefault(
             e["worker"],
             {
@@ -372,7 +401,8 @@ def render(events: list[dict[str, Any]]) -> dict[str, Any]:
     evs = [
         {**e, "repo": lane_repo(e.get("repo"))} if e.get("kind") == "step" else e
         for e in current_pass(events)
-        if e.get("kind") != "step" or lane_repo(e.get("repo")) is not None
+        if e.get("kind") != "step"
+        or (lane_repo(e.get("repo")) is not None and e.get("status") in STATUSES)
     ]
     t = now()
     runner = {
@@ -504,12 +534,13 @@ def render(events: list[dict[str, Any]]) -> dict[str, Any]:
         "generated_at": t,
         "updated": t,
         "runner": {
-            k: runner[k]
-            for k in ("state", "pass_no", "budget", "pass_started", "pass_ended", "result", "note")
-        }
-        | {
-            k: scrub(v) if isinstance(v := runner[k], str) else v
-            for k in ("state", "result", "note")
+            "state": scrub(str(runner["state"])),
+            "pass_no": _int_or_none(runner["pass_no"]),
+            "budget": _int_or_none(runner["budget"]),
+            "pass_started": runner["pass_started"],
+            "pass_ended": runner["pass_ended"],
+            "result": None if runner["result"] is None else scrub(str(runner["result"])),
+            "note": scrub(str(runner["note"])),
         },
         "issues": [
             {
@@ -558,7 +589,7 @@ def render(events: list[dict[str, Any]]) -> dict[str, Any]:
         "log": [
             {
                 "at": e["at"],
-                "issue": e.get("issue"),
+                "issue": issue_no(e.get("issue")) or None,
                 "repo": e.get("repo") or "",
                 "agent": scrub(e["agent"]),
                 "role": scrub(str(e["role"])),
