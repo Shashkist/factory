@@ -1,0 +1,31 @@
+{
+  "comments": [
+    {
+      "id": "IC_1",
+      "author": {
+        "login": "someone"
+      },
+      "body": "<!-- pulsesign-issue-claim\n{\"released\": \"2026-11-14T09:00:00+00:00\", \"by\": \"lf-old\", \"reason\": \"done for today\"}\n-->\nReleased by `lf-old` - done for today",
+      "createdAt": "2026-11-14T08:00:00Z",
+      "url": "https://github.com/example/factory/issues/18#issuecomment-1"
+    },
+    {
+      "id": "IC_2",
+      "author": {
+        "login": "someone"
+      },
+      "body": "Looks good, carry on.",
+      "createdAt": "2026-11-14T08:00:00Z",
+      "url": "https://github.com/example/factory/issues/18#issuecomment-2"
+    },
+    {
+      "id": "IC_3",
+      "author": {
+        "login": "someone"
+      },
+      "body": "<!-- pulsesign-issue-claim\n{\n  \"branch\": \"f/18-factory-dashboard\",\n  \"claimed\": \"2026-11-14T07:00:00+00:00\",\n  \"heartbeat\": \"2026-11-14T11:30:00+00:00\",\n  \"session\": \"lf-k7m2\",\n  \"step\": \"writing the exam\",\n  \"worktree\": \"\"\n}\n-->\n**Claimed by `lf-k7m2`**\n",
+      "createdAt": "2026-11-14T08:00:00Z",
+      "url": "https://github.com/example/factory/issues/18#issuecomment-3"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "comments": [
+    {
+      "id": "IC_1",
+      "author": {
+        "login": "someone"
+      },
+      "body": "<!-- pulsesign-issue-claim\n{\"released\": \"2026-11-14T09:00:00+00:00\", \"by\": \"lf-k7m2\", \"reason\": \"done for today\"}\n-->\nReleased by `lf-k7m2` - done for today",
+      "createdAt": "2026-11-14T08:00:00Z",
+      "url": "https://github.com/example/factory/issues/18#issuecomment-1"
+    },
+    {
+      "id": "IC_2",
+      "author": {
+        "login": "someone"
+      },
+      "body": "Looks good, carry on.",
+      "createdAt": "2026-11-14T08:00:00Z",
+      "url": "https://github.com/example/factory/issues/18#issuecomment-2"
+    }
+  ]
+}

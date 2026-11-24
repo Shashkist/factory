@@ -1,0 +1,312 @@
+[
+  {
+    "number": 1,
+    "title": "Closed one",
+    "state": "CLOSED",
+    "labels": [
+      {
+        "name": "status:done"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p1"
+      }
+    ],
+    "createdAt": "2026-10-31T10:00:00Z",
+    "closedAt": "2026-11-01T10:00:00Z",
+    "url": "https://github.com/example/factory/issues/1"
+  },
+  {
+    "number": 2,
+    "title": "Closed two",
+    "state": "CLOSED",
+    "labels": [
+      {
+        "name": "status:done"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p1"
+      }
+    ],
+    "createdAt": "2026-11-10T04:00:00Z",
+    "closedAt": "2026-11-10T10:00:00Z",
+    "url": "https://github.com/example/factory/issues/2"
+  },
+  {
+    "number": 3,
+    "title": "Closed three",
+    "state": "CLOSED",
+    "labels": [
+      {
+        "name": "status:done"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p2"
+      }
+    ],
+    "createdAt": "2026-11-09T11:00:00Z",
+    "closedAt": "2026-11-10T11:00:00Z",
+    "url": "https://github.com/example/factory/issues/3"
+  },
+  {
+    "number": 4,
+    "title": "Closed four",
+    "state": "CLOSED",
+    "labels": [
+      {
+        "name": "status:done"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p2"
+      }
+    ],
+    "createdAt": "2026-11-10T19:59:59Z",
+    "closedAt": "2026-11-10T23:59:59Z",
+    "url": "https://github.com/example/factory/issues/4"
+  },
+  {
+    "number": 5,
+    "title": "Closed five",
+    "state": "CLOSED",
+    "labels": [
+      {
+        "name": "status:done"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p1"
+      }
+    ],
+    "createdAt": "2026-11-12T22:00:00Z",
+    "closedAt": "2026-11-13T08:00:00Z",
+    "url": "https://github.com/example/factory/issues/5"
+  },
+  {
+    "number": 6,
+    "title": "Closed six",
+    "state": "CLOSED",
+    "labels": [
+      {
+        "name": "status:done"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p1"
+      }
+    ],
+    "createdAt": "2026-11-14T06:00:00Z",
+    "closedAt": "2026-11-14T08:00:00Z",
+    "url": "https://github.com/example/factory/issues/6"
+  },
+  {
+    "number": 7,
+    "title": "Closed seven",
+    "state": "CLOSED",
+    "labels": [
+      {
+        "name": "status:done"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p3"
+      }
+    ],
+    "createdAt": "2026-11-13T22:00:00Z",
+    "closedAt": "2026-11-14T10:00:00Z",
+    "url": "https://github.com/example/factory/issues/7"
+  },
+  {
+    "number": 8,
+    "title": "Closed long ago",
+    "state": "CLOSED",
+    "labels": [
+      {
+        "name": "status:done"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p3"
+      }
+    ],
+    "createdAt": "2026-10-01T00:00:00Z",
+    "closedAt": "2026-10-31T23:00:00Z",
+    "url": "https://github.com/example/factory/issues/8"
+  },
+  {
+    "number": 10,
+    "title": "Ready one",
+    "state": "OPEN",
+    "labels": [
+      {
+        "name": "status:ready"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p1"
+      }
+    ],
+    "createdAt": "2026-11-14T01:00:00Z",
+    "closedAt": null,
+    "url": "https://github.com/example/factory/issues/10"
+  },
+  {
+    "number": 11,
+    "title": "Ready two",
+    "state": "OPEN",
+    "labels": [
+      {
+        "name": "status:ready"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p2"
+      }
+    ],
+    "createdAt": "2026-11-14T01:00:00Z",
+    "closedAt": null,
+    "url": "https://github.com/example/factory/issues/11"
+  },
+  {
+    "number": 12,
+    "title": "Ready three",
+    "state": "OPEN",
+    "labels": [
+      {
+        "name": "status:ready"
+      },
+      {
+        "name": "phase:2"
+      },
+      {
+        "name": "priority:p1"
+      }
+    ],
+    "createdAt": "2026-11-14T01:00:00Z",
+    "closedAt": null,
+    "url": "https://github.com/example/factory/issues/12"
+  },
+  {
+    "number": 14,
+    "title": "Blocked one",
+    "state": "OPEN",
+    "labels": [
+      {
+        "name": "status:blocked"
+      },
+      {
+        "name": "phase:2"
+      },
+      {
+        "name": "priority:p2"
+      }
+    ],
+    "createdAt": "2026-11-14T01:00:00Z",
+    "closedAt": null,
+    "url": "https://github.com/example/factory/issues/14"
+  },
+  {
+    "number": 15,
+    "title": "Needs owner one",
+    "state": "OPEN",
+    "labels": [
+      {
+        "name": "status:needs-owner"
+      },
+      {
+        "name": "phase:2"
+      },
+      {
+        "name": "priority:p3"
+      }
+    ],
+    "createdAt": "2026-11-14T01:00:00Z",
+    "closedAt": null,
+    "url": "https://github.com/example/factory/issues/15"
+  },
+  {
+    "number": 16,
+    "title": "In review one",
+    "state": "OPEN",
+    "labels": [
+      {
+        "name": "status:in-review"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p2"
+      }
+    ],
+    "createdAt": "2026-11-14T01:00:00Z",
+    "closedAt": null,
+    "url": "https://github.com/example/factory/issues/16"
+  },
+  {
+    "number": 18,
+    "title": "Dashboard work",
+    "state": "OPEN",
+    "labels": [
+      {
+        "name": "status:in-progress"
+      },
+      {
+        "name": "type:infra"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p1"
+      }
+    ],
+    "createdAt": "2026-11-14T01:00:00Z",
+    "closedAt": null,
+    "url": "https://github.com/example/factory/issues/18"
+  },
+  {
+    "number": 30,
+    "title": "Incident: main is red",
+    "state": "OPEN",
+    "labels": [
+      {
+        "name": "status:ready"
+      },
+      {
+        "name": "type:incident"
+      },
+      {
+        "name": "phase:1"
+      },
+      {
+        "name": "priority:p1"
+      }
+    ],
+    "createdAt": "2026-11-14T11:00:00Z",
+    "closedAt": null,
+    "url": "https://github.com/example/factory/issues/30"
+  }
+]
