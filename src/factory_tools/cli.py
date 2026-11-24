@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from factory_tools import claims, profile, progress
+from factory_tools.pipeline import incident_gate, paths
 
 
 def _profile_check(args: argparse.Namespace) -> int:
@@ -20,6 +21,11 @@ def _profile_check(args: argparse.Namespace) -> int:
     for p in problems:
         print(f"{p.path or '(file)'}: {p.message}")
     return 2 if any(p.fatal for p in problems) else 1
+
+
+def _incident_gate(args: argparse.Namespace) -> int:
+    print(incident_gate.decide(args.workflow, args.event, args.previous))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,6 +43,23 @@ def build_parser() -> argparse.ArgumentParser:
     prog = groups.add_parser("progress", help="live progress and the crew view", add_help=False)
     prog.add_argument("args", nargs=argparse.REMAINDER)
     prog.set_defaults(func=lambda a: progress.run(a.args))
+
+    cp = groups.add_parser("ci-paths", help="CI path rules: docs-only deploys, heavy PRs")
+    cp_cmds = cp.add_subparsers(dest="command", required=True)
+    for name, first, helptext in (
+        ("deploys", "tag", "true or false: may a green CI for <tag> deploy (main is <head>)"),
+        ("heavy", "base", "true or false: does the PR touch a heavy path"),
+    ):
+        sp = cp_cmds.add_parser(name, help=helptext)
+        sp.add_argument(first)
+        sp.add_argument("head")
+        sp.set_defaults(func=lambda a, n=name, f=first: paths.main([n, getattr(a, f), a.head]))
+
+    ig = groups.add_parser("incident-gate", help="should a failed workflow run raise an incident")
+    ig.add_argument("--workflow", required=True)
+    ig.add_argument("--event", required=True)
+    ig.add_argument("--previous", default="")
+    ig.set_defaults(func=_incident_gate)
     return parser
 
 

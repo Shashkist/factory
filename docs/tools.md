@@ -1,0 +1,167 @@
+# factory-tools: the commands
+
+`factory-tools` is the command line of the `factory_tools` package. Every command also runs as `python -m factory_tools <command>`. No command reads, prints or stores a token value; `gh` and git use the credentials already on the machine.
+
+## `factory-tools profile`
+
+The project profile (`.factory/factory.yaml`); see [profile.md](profile.md).
+
+```
+factory-tools profile check
+```
+
+### `factory-tools profile check`
+
+Validate a profile. The optional argument is the path (default `.factory/factory.yaml`). Prints `ok` and exits 0, or one `<key path>: <message>` line per problem and exits 1 (2 when the file cannot be read).
+
+```
+factory-tools profile check .factory/factory.yaml
+```
+
+## `factory-tools claim`
+
+Take an issue, or fail if someone live holds it. Takes the issue number and `--session NAME`.
+
+Options: `--session` (this session's name), `--repo` (owner/name, when not this repository), `--branch` (required), `--worktree`, `--step`, `--steal` (take a held claim; needs `--reason`), `--reason`, `--stale-after` (minutes before a claim counts as quiet).
+
+```
+factory-tools claim 12 --session lf-a1b2 --branch f/12-claims --step build
+```
+
+## `factory-tools heartbeat`
+
+Say you are still here and what you are doing.
+
+Options: `--session`, `--repo`, `--step`, `--blocked` (waiting on someone off this machine; `stale` will not offer a steal), `--unblocked` (the wait is over).
+
+```
+factory-tools heartbeat 12 --session lf-a1b2 --step check
+```
+
+## `factory-tools release`
+
+Hand the issue back.
+
+Options: `--session`, `--repo`, `--reason`, `--force` (release a claim that is another session's).
+
+```
+factory-tools release 12 --session lf-a1b2 --reason merged
+```
+
+## `factory-tools status`
+
+Who holds what, across repositories.
+
+Options: `--json` (machine-readable rows), `--repo` (owner/name, repeatable: only these), `--repos-file` (a list file with `- repo: owner/name` lines).
+
+```
+factory-tools status --repo Shashkist/factory --json
+```
+
+## `factory-tools stale`
+
+Claims whose session has gone quiet, with the branch to continue from.
+
+Options: `--older-than` (minutes of silence), `--repo` (repeatable), `--repos-file`.
+
+```
+factory-tools stale --older-than 60 --repo Shashkist/factory
+```
+
+## `factory-tools progress`
+
+Live progress of the factory. The sub-commands below take their own options; the events file is `$LF_PROGRESS_FILE`, else `~/.lf-factory/progress.jsonl`. Nothing here fails the caller.
+
+```
+factory-tools progress add --issue 14 --agent implementer-14 --role implementer --station build --substep "unit tests" --status start
+```
+
+### `factory-tools progress add`
+
+Record one sub-step. Required: `--agent`, `--role`, `--station`, `--substep`, `--status`. Optional: `--issue`, `--repo` (owner/name), `--title`, `--detail-file` (a file, or `-` for stdin).
+
+```
+factory-tools progress add --issue 14 --agent implementer-14 --role implementer --station build --substep lint --status done
+```
+
+### `factory-tools progress hook`
+
+Record a Claude Code hook event read from stdin (allowlisted fields only). Does nothing unless `$LF_PROGRESS_FILE` is set.
+
+```
+factory-tools progress hook < hook-event.json
+```
+
+### `factory-tools progress pass-start`
+
+Mark the start of a manager pass. Options: `--pass-no`, `--budget`.
+
+```
+factory-tools progress pass-start --pass-no 3 --budget 40
+```
+
+### `factory-tools progress pass-end`
+
+Mark the end of a manager pass. Option: `--result` (default `done`).
+
+```
+factory-tools progress pass-end --result done
+```
+
+### `factory-tools progress runner-state`
+
+Set the runner state. Options: `--state` (required: `idle`, `paused`, `budget` or `running`), `--note`.
+
+```
+factory-tools progress runner-state --state idle --note "nothing ready"
+```
+
+### `factory-tools progress render`
+
+Build the public live view from the events. Option: `--out` (required, the output file).
+
+```
+factory-tools progress render --out live.json
+```
+
+### `factory-tools progress publish`
+
+Push the rendered live view with a key that can write only that file. Options: `--key` (required, the key file), `--host` (required), `--force`, `--min-age` (seconds since the last push).
+
+```
+factory-tools progress publish --key KEYFILE --host root@HOST --min-age 30
+```
+
+## `factory-tools ci-paths`
+
+CI path rules: which commits are docs-only and which pull requests need the heavy jobs. Runs as `python -m factory_tools.pipeline.paths` and as a plain file with the same arguments. Prints `true` or `false`; fails loudly on an unknown revision.
+
+```
+factory-tools ci-paths deploys TAG HEAD
+```
+
+### `factory-tools ci-paths deploys`
+
+`true` when a green CI for `<tag>` may deploy: the tag is on `<head>` (main) and only docs changed since.
+
+```
+factory-tools ci-paths deploys v1.2.0 origin/main
+```
+
+### `factory-tools ci-paths heavy`
+
+`true` when the pull request (`<base>...<head>`) touches a heavy path.
+
+```
+factory-tools ci-paths heavy origin/main HEAD
+```
+
+## `factory-tools incident-gate`
+
+Decide whether a failed workflow run should raise an incident. Prints `raise` or `skip`: a single failed scheduled `Factory dashboard` run is noise and raises only when the previous scheduled run failed too; everything else raises. Runs as `python -m factory_tools.pipeline.incident_gate` and as a plain file.
+
+Options: `--workflow` (required, the workflow name), `--event` (required, the triggering event), `--previous` (the previous run's conclusion; default empty).
+
+```
+factory-tools incident-gate --workflow "Factory dashboard" --event schedule --previous failure
+```
