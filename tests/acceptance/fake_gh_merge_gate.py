@@ -10,8 +10,11 @@ Run as: python fake_gh_merge_gate.py <gh args>, with FAKE_GH_STATE pointing at a
 
 * `pr view <n> ... --json <fields>` returns ONE object with every stored field, whatever
   fields were asked for (the gate must not depend on --jq or on the field list).
-* `api repos/<owner>/<repo>/commits/<oid>` returns {"files": [{"filename": ...}]}; the
-  `{owner}/{repo}` placeholder resolves to the -R repository (gh does this itself).
+* `api repos/<owner>/<repo>/commits/<oid>` returns {"files": [{"filename": ...}]}. Like the
+  real `gh api` (which has no -R flag), a full path resolves to the repository named in the
+  path (case-insensitive, with or without -R); an unknown repository fails. Only the
+  `{owner}/{repo}` placeholder resolves to the -R repository or the default (gh fills it
+  from the current checkout itself).
 * `issue view <n> --json comments` returns {"comments": [...]} (empty for an unknown issue).
 * Anything that writes (pr merge, comment, review, edit, close, api -X ...) is recorded in
   `writes` and refused: the gate is read-only.
@@ -48,9 +51,14 @@ for flag in ("-R", "--repo"):
         scope = args[args.index(flag) + 1]
 repo = scope or s["default"]
 known = {k.lower(): v for k, v in s["repos"].items()}
-state = known.get(repo.lower())
-if state is None:
-    fail("Could not resolve to a Repository with the name '" + repo + "'")
+
+
+def lookup(name: str) -> dict:
+    found = known.get(name.lower())
+    if found is None:
+        fail("Could not resolve to a Repository with the name '" + name + "'")
+    return found
+
 
 group = args[0] if args else ""
 second = args[1] if len(args) > 1 else ""
@@ -68,6 +76,7 @@ if (
     fail("the merge gate is read-only: refused " + " ".join(args), 3)
 
 if args[:2] == ["pr", "view"]:
+    state = lookup(repo)
     pr = state["prs"].get(args[2])
     if pr is None:
         fail("no pull request " + args[2])
@@ -77,15 +86,17 @@ elif group == "api":
     path = next((a for a in args[1:] if a.startswith("repos/")), None)
     if path is None or "/commits/" not in path:
         fail("unsupported api call: " + " ".join(args))
-    path = path.replace("{owner}/{repo}", repo)
-    if not path.lower().startswith("repos/" + repo.lower() + "/commits/"):
-        fail("api path reaches another repository: " + path)
+    if path.startswith("repos/{owner}/{repo}/"):
+        path = "repos/" + repo + path[len("repos/{owner}/{repo}"):]
+    parts = path.split("/")
+    state = lookup("/".join(parts[1:3]))
     oid = path.rsplit("/commits/", 1)[1].split("?")[0]
     if oid not in state["commits"]:
         fail("no commit " + oid)
     save()
     print(json.dumps({"files": [{"filename": f} for f in state["commits"][oid]]}))
 elif args[:2] == ["issue", "view"]:
+    state = lookup(repo)
     save()
     print(json.dumps({"comments": state["issues"].get(args[2].lstrip("#"), [])}))
 else:
