@@ -2,7 +2,7 @@
 
 The plugin in `plugin/` is the Factory's working method: one skill that runs a pass, and four role agents that do the work. It is project-neutral. Every project fact comes from two places: the project profile `.factory/factory.yaml` and the project's `CLAUDE.md`.
 
-At the start of a pass the manager skill runs `factory-tools methodology render`. It prints a "This project" section filled from the profile, with a documented default for every key the profile leaves out. Where the skill says "the limit", it means the number printed there.
+At the start of a pass the manager skill runs `factory-tools methodology render`. It prints a "This project" section filled from the profile, with a documented default for every key it prints. `protected_paths` and `required_checks` print nothing when absent. Where the skill says "the limit", it means the number printed there.
 
 ## The pass
 
@@ -12,7 +12,7 @@ One pass is one run of the manager skill. It works over every repository in the 
 2. **Fix the line.** A red CI on the default branch, a failed deploy or a failed smoke run comes first, as an incident issue with top priority.
 3. **Plan.** Only when planning is on (the profile has `planning`). If fewer issues are ready than `planning.keep_ready`, slice more from `planning.spec`: one pull request of about 400 lines or less per issue, with testable acceptance criteria and `Depends on #n`. With no `planning`, slice nothing.
 4. **Pick and claim.** Take the highest priority ready issue whose dependencies are closed: incident p0, then p0, p1, p2, p3, oldest first. Claim it with `factory-tools claim`, branch `f/<n>-<slug>`, and commit the state file. Keep up to `limits.parallel_issues` issues in flight, and claim the next independent one while another waits.
-5. **Decide.** For every open question: the spec says, then the decisions file says, then research with the `researcher`, then the simplest option that keeps the guardrails. Write the decision down with how to revert it. Only an owner-only blocker (a secret, DNS, money) goes to the owner file. Then pick another issue.
+5. **Decide.** For every open question: the spec says, then the decisions file says, then research with the `researcher`, then the simplest option that keeps the guardrails. Write the decision down with how to revert it. Only an owner-only blocker (a secret, DNS, money, the owner's other services) goes to the owner file. Then pick another issue.
 6. **Exam, build, check.** The `exam-writer` commits the acceptance tests first. The `implementer` makes them pass in a worktree. Open a pull request, wait for CI (at most `limits.ci_rounds` rounds), then the `reviewer` reviews it in fresh context (at most `limits.review_rounds` rounds). The manager posts the reviewer's verdict as `Review round <k>: APPROVE|CHANGES at <head sha>`.
 7. **Ship.** Check what you are shipping, run `factory-tools merge-gate`, and squash-merge only when it prints `MERGE`. Shipped means the deploy and the `smoke` check when the project has them, otherwise green CI on the default branch.
 8. **Close.** Comment with the evidence, close the issue, flip its label to done, release the claim, update the state file.
@@ -29,6 +29,7 @@ One pass is one run of the manager skill. It works over every repository in the 
 | `required_checks` | CI checks that must be green | none |
 | `labels` | the Factory's label names mapped to the project's | the Factory's own names |
 | `limits` | `limits.ci_rounds` (5), `limits.review_rounds` (2), `limits.parallel_issues` (3) | those numbers |
+| `models` | role to model name; accepted by the profile but read by no role, each agent's frontmatter `model:` applies | the agent's own `model:` |
 | `smoke` | a `run` command with `cwd`, or a `workflow` | none configured |
 | `research_hints` | products and sources to look at first | none |
 | `areas` | area name to path globs, to pick the `verify` group | none |
@@ -66,13 +67,13 @@ Makes the exam pass with the minimum code, in a worktree. It follows red, green,
 Profile keys it reads:
 - `exam`, whose paths it never edits.
 - `protected_paths`, which it does not edit unless the issue names them.
-- `verify` and `areas`, to run the verify group of each area its changed paths fall in; with no match it runs every group.
+- `verify` and `areas`, to run the verify group of each area its changed paths fall in; it runs every verify group when any changed path matches no area, or when a matched area has no verify group of that name.
 
 CLAUDE.md sections it reads: where unit tests live, what counts as exam, the verification commands, and the guardrails.
 
 ## reviewer
 
-Reviews one pull request in fresh context and tries to refute it. It cannot edit files. The order is guardrails, correctness against the acceptance criteria and the spec, the exam, then simplicity. The output is `APPROVE` or `CHANGES` with numbered findings that cite file and line.
+Reviews one pull request in fresh context and tries to refute it. It has no Write or Edit tool, but it keeps Bash. The order is guardrails, correctness against the acceptance criteria and the spec, the exam, then simplicity. The output is `APPROVE` or `CHANGES` with numbered findings that cite file and line.
 
 Profile keys it reads:
 - `protected_paths`, to name each protected file the diff touches and say whether the issue allows it.

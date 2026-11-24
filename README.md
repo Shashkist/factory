@@ -8,13 +8,13 @@ A software factory: it takes GitHub issues on your repositories to merged, verif
 
 ## Methodology plugin
 
-The method (the pass, the role agents and the profile keys they read) is a Claude Code plugin in `plugin/`. It is described in [`docs/methodology.md`](docs/methodology.md). Install it:
+The method (the pass, the role agents and the profile keys they read) is a Claude Code plugin in `plugin/`. It is described in [`docs/methodology.md`](docs/methodology.md). The install commands are:
 
 ```
 /plugin marketplace add Shashkist/factory
 /plugin install factory@factory
 ```
 
-The marketplace manifest arrives with the plugin switch (#7); until then the commands name the repository.
+These commands work once #7 adds the marketplace manifest (`.claude-plugin/marketplace.json`). Until then the plugin loads from a clone with `claude --plugin-dir plugin`.
 
 Status: early development. The design is in [`docs/spec/2026-11-20-factory-product-design.md`](docs/spec/2026-11-20-factory-product-design.md). The first client is [Learning Factory](https://github.com/Shashkist/Learning_factory), whose factory this project grows out of. Progress: https://factory.shashkist.com
