@@ -94,12 +94,6 @@ def queue(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(ready, key=lambda r: (r["priority"], r["number"]))
 
 
-def section(text: str, heading: str) -> str:
-    """Body of a `## <heading>` section, stripped; empty if absent."""
-    match = re.search(rf"^## {re.escape(heading)}[ \t]*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
-    return match.group(1).strip() if match else ""
-
-
 def parse_decisions(text: str) -> list[dict[str, str]]:
     return [
         {"id": m.group(1), "title": m.group(2).strip()}
@@ -246,7 +240,8 @@ class Source:
         try:
             return gh_run(["api", f"repos/{self.repo}/contents/docs/factory/{name}",
                            "-H", "Accept: application/vnd.github.raw"])
-        except RuntimeError:
+        except RuntimeError as err:
+            print(f"warning: {name} of {self.repo} not read: {err}", file=sys.stderr)
             return ""
 
     def comments(self, number: int) -> list[dict[str, Any]]:

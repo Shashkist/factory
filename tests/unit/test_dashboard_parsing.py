@@ -5,7 +5,6 @@ from factory_tools.dashboard.snapshot import (
     parse_claim,
     parse_decisions,
     parse_owner_open,
-    section,
     throughput,
 )
 
@@ -25,12 +24,6 @@ def test_current_claim_first_live_wins_and_released_is_skipped():
     assert current_claim(1, [rel, b])["session"] == "b"  # type: ignore[index]
     assert current_claim(1, [rel]) is None
     assert current_claim(1, []) is None
-
-
-def test_section_stops_at_next_heading_and_missing_is_empty():
-    text = "## Now\n\n- a\n\n## Next\nb\n"
-    assert section(text, "Now") == "- a"
-    assert section(text, "Nope") == ""
 
 
 def test_decisions_and_owner_parsing():
