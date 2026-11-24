@@ -6,7 +6,7 @@ _Status: approved by the owner, 2026-11-23. Working name: **Factory**. Source of
 
 Today's factory is welded to one repository: its skill, agents, hooks and scripts live inside Learning_factory and run from one laptop. The owner wants the factory to become a **product**:
 
-- A client brings **their own repository with GitHub issues already written** (a prerequisite) and their own CI.
+- A client brings **their own repository** with a design (or the idea for one) and their own CI. _(Changed by §18: issues are no longer a prerequisite; the client's agent writes them following the methodology.)_
 - The client **connects** the repository and their **compute** (their own Claude Code and subscription) to the Factory, and from then on development can run **autonomously**. The client only watches progress on the Factory page and answers what only they can answer.
 - When one machine is not enough, the client invites a friend who connects **their** compute (their own subscription) to the same project, and the Factory runs more tracks in parallel (for example 5 + 5 = 10).
 - The client can also work **by hand** with their agent on an issue; the Factory sees it and does not give that issue to anyone else.
@@ -27,7 +27,7 @@ Today's factory is welded to one repository: its skill, agents, hooks and script
 - G8. Learning Factory becomes client #1 with no loss of what it does today.
 
 **Non-goals (v1)**
-- Turning an idea into a spec or issues (the client writes issues).
+- ~~Turning an idea into a spec or issues (the client writes issues).~~ Superseded by §18: the methodology tells the client's agent how to design, slice and write issues. The Factory itself still writes nothing.
 - Engines other than Claude Code (opencode is v2, Codex later; the runner is built for adapters from day one).
 - Hosting compute for clients, billing, a marketplace, GitLab/Bitbucket.
 - Deploying the client's product: that is the client's CI/CD. The Factory only reads its result.
@@ -84,7 +84,7 @@ Everything specific to the project, read by the runner at job start and layered 
 - `.factory/DECISIONS.md`, `.factory/OWNER.md`: the project's memory, as LF's `docs/factory/*` today. `STATE.md` disappears: the Hub holds live state; the page replaces it.
 
 ### 5.3 Factory Hub (server)
-- **Accounts and projects.** Sign in with GitHub. A project = one repository + its members.
+- **Accounts and projects.** Sign in with GitHub or Google (§18); connecting a repository always needs GitHub. A project = one repository + its members.
 - **Repo connector**: a GitHub App installed on the repository (least privilege: issues, pull requests, contents, checks, comments). Webhooks keep the Hub's view of issues/PRs/CI fresh. The App token never leaves the Hub; runners push with the user's own git credentials.
 - **Compute connector registry**: runners register with a one-time code from the page, get a runner token scoped to the projects their owner allows, and declare capacity (5.6).
 - **Scheduler and job queue** (deterministic, no LLM): picks `ready` issues by priority and dependencies (`Depends on #n` closed), cuts them into jobs, hands each job to one runner atomically. Detects dead runners by missed heartbeats and re-queues their jobs on the same branch.
@@ -187,3 +187,37 @@ None at the moment.
 - **Built by the factory itself.** Until v0 is done, the existing Learning Factory manager (running from `Shashkist/Learning_factory` on the owner's laptop) builds this repository through issues here. Its first change, made in LF, is to take issues from a second repository: the first multi-repository step, used on itself.
 - **LF migrates as client #1 and labs development continues from here.** v0 moves the current methodology (skill, agents, scripts, reusable CI checks) into this repository; LF keeps only its project profile. After the switch, LF's laptop runner runs the methodology from this repository and works both `Shashkist/Learning_factory` (labs) and `Shashkist/factory`.
 - **`factory.shashkist.com` migrates too.** The live dashboard (today `labs/factory-dashboard/` and the `factory-dashboard.yml` workflow in LF) moves here, shows every connected repository, and is published from this repository. In v1 it becomes the Hub page.
+
+## 18. Owner decisions, 2026-11-24 (roles, dashboards, deployment targets, storage)
+
+**The Factory is not an agent.** It is a methodology plus deterministic coordination. It hands the user's own Claude Code (or another agent) everything it needs: skills and instructions for design, slicing a design into tasks, writing GitHub issues, exams, implementation, review and decisions, plus CI templates and the gates. **All thinking and all code are done by the user's agent**, on the user's machine, with the user's own logins. The Factory picks, claims, gates and merges, and it runs no model (as §1 and §6 already say).
+
+**The user's path.**
+1. Sign in with GitHub or Google.
+2. Connect a GitHub repository. The repository already holds a design, or the user's agent writes one with the design skill.
+3. Press start. The user's agent follows the methodology: it turns the design into tasks and GitHub issues, sets up CI from the Factory's templates, and works the issues through the usual flow (exam, build, CI, review, merge gate).
+
+The user answers only what only they can answer.
+
+**Dashboards per repository.** Each connected repository has its own dashboard. A navigation bar at the top switches between them, and there is no mixed view (factory#45). Later each user sees only the dashboards of the projects they are a member of.
+
+**Deployment targets (methodology, not Factory infrastructure).** The project profile names where the product lives:
+
+```yaml
+deploy:
+  web: github-pages        # more hosts later
+  database: none           # or: supabase
+```
+
+- **No database:** a static site on GitHub Pages, deployed by the project's own CI. No secrets needed.
+- **With a database:** GitHub Pages plus **the user's own Supabase**. The user's agent creates and manages it with the user's login (Supabase CLI or MCP on the user's machine) and puts the keys into the user's repository secrets. The Factory never holds, sees or proxies the database or its keys (§2 anti-goal stays).
+- The methodology ships a recipe and checks for each target. For Supabase they are mandatory:
+  - migrations only as code in the repository;
+  - row-level security on every table;
+  - the service key never reaches the front end;
+  - an exam that proves user A cannot read user B's data.
+
+  The methodology also tells the agent to state the cost of a choice (Supabase's free tier allows a limited number of projects and pauses inactive ones).
+- Deploying stays the client's CI/CD (§2 non-goal); the methodology only supplies the recipe and the checks.
+
+**The Factory's own storage.** The Factory gets its own database (Supabase is the candidate) only when the Factory itself needs more memory than GitHub and files give it, for example Hub accounts, projects and live state in v1. It is never used for a client's product data. Until then GitHub stays the source of truth (§3).
