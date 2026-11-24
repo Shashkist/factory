@@ -184,3 +184,19 @@ in force · factory · 2026-11-24 · revertible
 **D14 amendment 2 (2026-11-24).** The verification of ab981da found a regression the fix itself introduced (an IP followed by a full stop passes whole) and the rest of finding 9 (a naive event time still makes `render` raise). Merging #30 and fixing later would ship the regression to the public page, so the leftovers (A, B and nit C of the verification comment) are fixed on #30's own branch, each failing input as a unit test, and one more fresh reviewer verifies only them. #30 merges only on that APPROVE.
 
 **D13 amendment 1 (review round 1 of #32, 2026-11-24).** `snapshot.json` keeps `lanes` (in-progress and in-review issues per repository: repository, number, title) although the page draws its lanes from the laptop's `live.json`: #6's exam requires it, and every field in it is already shown on the page in the queue and issue rows. This is the one named exception to LF D14's "only what the page shows". `repos` (per-repository counts) is rendered in the counts card.
+
+## D15 · #29: the README's install command assumes the marketplace name `factory` until #7 adds the manifest
+assumption · factory · 2026-11-24 · revertible
+
+**Decision.** The repository has `plugin/.claude-plugin/plugin.json` (plugin `factory`) but no `marketplace.json`. #29 asks for the install command in the README, so it reads `/plugin marketplace add Shashkist/factory` then `/plugin install factory@factory`, with one line saying the marketplace manifest arrives with the plugin switch (#7). #29 adds no manifest.
+**Why.** A manifest decides how clients install and update the plugin; that belongs to #7, where the first client switches and can test it end to end.
+**Alternatives.** Add a minimal `marketplace.json` in #29 (untested install path in a docs PR); leave the command out (fails #29's criterion).
+**Revert.** #7 writes the real marketplace name into the README; if it differs, the README line changes there.
+
+## D16 · #35: a PR that closes an issue in another repository holds, as in Learning Factory
+in force · factory · 2026-11-24 · revertible
+
+**Decision.** #35 says the session must hold "the claim on every issue the PR closes, in every repository". The port keeps LF's gate behaviour: a closing keyword naming an issue in another repository holds with the reason "another repository", and every same-repository issue the PR closes needs this session's claim.
+**Why.** GitHub closes only same-repository issues on merge, so a cross-repository `Closes` line is a mistake or an attempt to borrow another repository's claim; holding is the stricter reading and matches the ported exam.
+**Alternatives.** Look up the claim in the other repository and merge if held (more `gh` reads, and the issue still would not close on merge).
+**Revert.** Teach `merge-gate` to read the claim in the named repository and drop the hold.
