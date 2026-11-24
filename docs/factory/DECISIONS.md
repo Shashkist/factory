@@ -120,3 +120,14 @@ in force · factory · 2026-11-24 · revertible
 **Decision.** Keep the #1 rule as strict as it is. The two modules go to a new package `src/factory_tools/pipeline/` (`paths.py`, `incident_gate.py`), run as `python -m factory_tools.pipeline.<name>` and as plain files; CLI commands stay `factory-tools ci-paths` and `factory-tools incident-gate`. The exam is corrected in an exam-only commit on a fresh branch `f/14-ci-tools-2` (module paths only; every case stays), then the code follows. The first branch `f/14-ci-tools` (pushed, no PR) is deleted.
 **Alternatives.** Narrow the CI surface to the gate scripts (`exam_integrity.py`, `junit_gate.py`, `incident.py`): loosens an older exam's rule. Land the code before its exam: breaks exam-first.
 **Revert.** Move the modules back under `ci/` once the CI surface is narrowed by its own decision.
+
+## D10 · #4 is sliced into three issues
+in force · factory · 2026-11-24 · revertible
+
+**Decision.** #4 (the methodology as a Claude Code plugin) ports one skill and four agents, adds a profile-driven renderer and a methodology document: more than one reviewable PR. It is sliced, each slice one PR, and #4 closes when all three are merged:
+- **#27** `plugin/.claude-plugin/plugin.json` and the four role agents, generic (criteria 1 and 2 of #4, and criterion 3 for the agents).
+- **#28** the manager skill with project facts rendered from the profile (`factory-tools methodology render`), criterion 4, and criterion 3 for the skill. Depends on #27.
+- **#29** `docs/methodology.md`. Depends on #28.
+**Why.** The agents are small and self-contained and establish the plugin layout and the validation test; the skill depends on that layout and needs the renderer; the document describes both.
+**Alternatives.** One PR for #4 (skill, agents, renderer, docs and the paragraph checklist together are too large to review well); skill first (the validation and forbidden-words tests would land with the larger piece).
+**Revert.** Close #27 to #29 and build #4 as one piece.
