@@ -71,6 +71,45 @@ def headings() -> list[str]:
     ]
 
 
+def name_in(name: str, text: str) -> bool:
+    """True when `name` appears in `text` as a whole word (a hyphen does not end a word)."""
+    return re.search(rf"(?<![\w-]){re.escape(name.lower())}(?![\w-])", text.lower()) is not None
+
+
+def sections() -> list[tuple[int, str, str]]:
+    """(level, heading text, body up to the next heading of the same or a higher level)."""
+    lines = doc_text().splitlines()
+    found: list[tuple[int, int, str]] = []
+    in_fence = False
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        m = re.match(r"^(#{1,6})\s+(\S.*)$", ln)
+        if m and not in_fence:
+            found.append((i, len(m.group(1)), m.group(2).strip()))
+    out = []
+    for n, (i, level, title) in enumerate(found):
+        end = len(lines)
+        for j, lvl, _ in found[n + 1 :]:
+            if lvl <= level:
+                end = j
+                break
+        out.append((level, title, "\n".join(lines[i + 1 : end])))
+    return out
+
+
+def section_body(name: str) -> str:
+    """The text of every section whose heading names `name` as a whole word."""
+    return "\n".join(body for _, title, body in sections() if name_in(name, title))
+
+
+def agent_read_keys(name: str) -> list[str]:
+    """Profile keys an agent file names as: the profile key `key`."""
+    text = (PLUGIN / "agents" / f"{name}.md").read_text(encoding="utf-8")
+    return sorted(set(re.findall(r"profile\s+key\s+`(\w+)`", text)))
+
+
 def plugin_agent_names() -> list[str]:
     assert PLUGIN.is_dir(), "plugin/ directory does not exist"
     return sorted(p.stem for p in (PLUGIN / "agents").glob("*.md"))
@@ -113,14 +152,14 @@ def test_plugin_has_agents_and_a_skill_to_document() -> None:
 
 @pytest.mark.parametrize("name", plugin_agent_names() or ["<no agents found>"])
 def test_every_agent_has_a_section_in_the_methodology_document(name: str) -> None:
-    assert any(name.lower() in h for h in headings()), (
+    assert any(name_in(name, h) for h in headings()), (
         f"docs/methodology.md has no heading naming the agent {name!r}"
     )
 
 
 @pytest.mark.parametrize("name", plugin_skill_names() or ["<no skills found>"])
 def test_the_skill_has_a_section_in_the_methodology_document(name: str) -> None:
-    assert any(name.lower() in h for h in headings()), (
+    assert any(name_in(name, h) for h in headings()), (
         f"docs/methodology.md has no heading naming the skill {name!r}"
     )
 
@@ -144,6 +183,43 @@ def test_every_nested_profile_key_is_listed_in_the_document(parent: str, sub: st
 
 def test_document_names_the_claude_md_sections_roles_read() -> None:
     assert "CLAUDE.md" in doc_text()
+
+
+# --- Criterion 1b: inside each role's own section: the keys that role reads and CLAUDE.md ---
+
+
+def agent_key_cases() -> list[tuple[str, str]]:
+    return [(n, k) for n in plugin_agent_names() for k in agent_read_keys(n)]
+
+
+def test_agent_files_name_profile_keys_so_the_derivation_is_not_empty() -> None:
+    derived = {k for n in plugin_agent_names() for k in agent_read_keys(n)}
+    assert {"exam", "verify", "areas", "protected_paths", "required_checks"} <= derived
+
+
+@pytest.mark.parametrize("name", plugin_agent_names() or ["<no agents found>"])
+def test_role_section_is_not_empty(name: str) -> None:
+    body = section_body(name)
+    assert len(re.findall(r"\w+", body)) >= 15, (
+        f"the section of {name!r} in docs/methodology.md is empty or only a stub"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "key"), agent_key_cases() or [("<none>", "<none>")]
+)
+def test_role_section_names_every_profile_key_its_agent_reads(name: str, key: str) -> None:
+    assert f"`{key}`" in section_body(name), (
+        f"the section of {name!r} must name the profile key `{key}` (in backticks) "
+        f"because plugin/agents/{name}.md reads it"
+    )
+
+
+@pytest.mark.parametrize("name", plugin_agent_names() or ["<no agents found>"])
+def test_role_section_mentions_claude_md(name: str) -> None:
+    assert "CLAUDE.md" in section_body(name), (
+        f"the section of {name!r} must mention CLAUDE.md inside the section itself"
+    )
 
 
 # --- Criterion 2: the pass steps are described ---
