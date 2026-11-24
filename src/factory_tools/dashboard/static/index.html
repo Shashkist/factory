@@ -14,9 +14,12 @@
   <div>
     <h1>Factory dashboard</h1>
     <p class="muted" id="updated">loading...</p>
+    <p class="muted" id="runner">Runner: waiting for the first live update...</p>
   </div>
   <button type="button" id="theme-toggle" class="btn" aria-label="Toggle light and dark theme">Theme</button>
 </header>
+
+<nav id="repo-tabs" class="tabs" aria-label="Repositories"></nav>
 
 <main>
   <section id="live" class="card wide live" aria-label="Live">
@@ -39,7 +42,6 @@
   <section class="card" aria-label="Queue">
     <h2>Queue</h2>
     <p class="muted" id="counts"></p>
-    <ul class="list" id="repo-counts"></ul>
     <ul class="list" id="queue"></ul>
   </section>
 
