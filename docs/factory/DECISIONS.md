@@ -200,3 +200,11 @@ in force · factory · 2026-11-24 · revertible
 **Why.** GitHub closes only same-repository issues on merge, so a cross-repository `Closes` line is a mistake or an attempt to borrow another repository's claim; holding is the stricter reading and matches the ported exam.
 **Alternatives.** Look up the claim in the other repository and merge if held (more `gh` reads, and the issue still would not close on merge).
 **Revert.** Teach `merge-gate` to read the claim in the named repository and drop the hold.
+
+## D17 · #35: the exam's fake `gh api` resolves a full repository path without `-R`, as the real `gh` does
+in force · factory · 2026-11-24 · revertible
+
+**Decision.** The real `gh api` has no `-R`/`--repo` flag; it takes the repository from the path (`repos/<owner>/<repo>/commits/<oid>`) or fills the `{owner}/{repo}` placeholder from the current checkout (or `GH_REPO`). The first exam of #35 (`tests/acceptance/fake_gh_merge_gate.py`) only resolved a commit when the call carried `-R`, so the first build had to call the full path and then fall back to the placeholder plus `-R`, a call that fails on the real `gh`. The exam-writer corrects only the fake in an exam-only commit: an `api` call with a full `repos/<owner>/<repo>/...` path resolves to that repository with or without `-R`; the placeholder still resolves to `-R` or the default repository. The `-R` in the criteria stays on `pr view` and `issue view`, which have it. The code then calls the full path only, with no fallback. #35 is rebuilt as `f/35-merge-gate-2` (exam commit, exam-only fix, code), because exam integrity refuses an exam commit after code (LF D103).
+**Why.** An exam that rewards a call the real tool rejects proves nothing; the fix makes the fake match the real `gh` and does not loosen any case (no case asserts `-R` on `api`).
+**Alternatives.** Keep the fallback (dead code on the real `gh`, and a hidden second read path); pass `GH_REPO` in the environment (the fake ignores it, the same exam change is needed).
+**Revert.** Restore the fake's `-R`-only resolution and the fallback call.
