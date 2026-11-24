@@ -18,6 +18,16 @@ Validate a profile. The optional argument is the path (default `.factory/factory
 factory-tools profile check .factory/factory.yaml
 ```
 
+## `factory-tools methodology`
+
+### `factory-tools methodology render`
+
+Print the manager skill's project section (verify commands with their cwd, exam globs, limits, research hints, smoke, protected paths, required checks, decisions and owner files) filled from the profile. `--profile PATH` (default `.factory/factory.yaml`). A key the profile leaves out prints its documented default from [profile.md](profile.md): exam `**/tests/acceptance/**`, ci_rounds 5, review_rounds 2, parallel_issues 3. A missing or invalid profile prints the problem naming the file and exits 2 (unreadable) or 1 (invalid), with no traceback.
+
+```
+factory-tools methodology render --profile .factory/factory.yaml
+```
+
 ## `factory-tools claim`
 
 Take an issue, or fail if someone live holds it. Takes the issue number and `--session NAME`.

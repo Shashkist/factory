@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from factory_tools import claims, profile, progress
+from factory_tools import claims, methodology, profile, progress
 from factory_tools.pipeline import incident_gate, paths
 
 
@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("path", nargs="?", default=profile.DEFAULT_PATH)
     check.set_defaults(func=_profile_check)
     claims.add_commands(groups)
+
+    meth = groups.add_parser("methodology", help="the methodology plugin")
+    meth_cmds = meth.add_subparsers(dest="command", required=True)
+    rend = meth_cmds.add_parser("render", help="print the skill's project section from a profile")
+    rend.add_argument("--profile", default=profile.DEFAULT_PATH)
+    rend.set_defaults(func=lambda a: methodology.run(a.profile))
 
     prog = groups.add_parser("progress", help="live progress and the crew view", add_help=False)
     prog.add_argument("args", nargs=argparse.REMAINDER)
