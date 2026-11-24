@@ -139,3 +139,5 @@ in force · factory · 2026-11-24 · revertible
 **Decision.** `progress add` caps the title at 120 characters (as the runner note already is). Scrubbing runs in `render` on the stored, already capped text, so a cut can only remove more, never leak a half form. No older exam pins 90.
 **Alternatives.** Shorten the exam's cases (weakens the "listed link next to a removed form" guard for titles); scrub before the cut (a cut could then split a listed link anyway).
 **Revert.** Set the cap back to 90 in `progress.py` and drop the six title cases of `test_a_listed_link_next_to_a_removed_form_is_kept` in an exam-only commit.
+
+**D11 amendment 1 (review round 1 of #30, 2026-11-24).** "A cut can only remove more" was wrong: cutting at the cap before scrubbing left the head of a form that its rule no longer matched (a 19-character key id, a 31-character token, three IP octets). `clean` now scrubs the whole text first, then cuts, and a cut inside a word drops that partial word before the ellipsis; `render` scrubs again. The 120-character title cap stays.
