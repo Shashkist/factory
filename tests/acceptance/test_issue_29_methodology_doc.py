@@ -11,16 +11,22 @@ The document must:
   - be linked from README.md, which also gives the plugin install command.
 """
 
+import dataclasses
 import re
 
 import pytest
 from helpers import ROOT
 from test_issue_27_plugin_agents import FORBIDDEN, PLUGIN, PROFILE_KEYS
 
+from factory_tools.profile import Limits, OwnerFiles, Planning, Profile
+
 DOC = ROOT / "docs" / "methodology.md"
 README = ROOT / "README.md"
 
-# Keys read by the manager skill and the renderer (slice 2 contract).
+RENDERER = ROOT / "src" / "factory_tools" / "methodology.py"
+
+# Keys read by the manager skill and the renderer (slice 2 contract); the renderer's own
+# reads are also derived from its source at test time (see renderer_profile_keys).
 SKILL_KEYS = [
     "methodology",
     "verify",
@@ -28,10 +34,16 @@ SKILL_KEYS = [
     "research_hints",
     "smoke",
     "owner_files",
-    "ci_rounds",
-    "review_rounds",
-    "parallel_issues",
+    "limits",
 ]
+
+# Nested profile keys, named as profile.py names them: parent -> sub-keys. Each sub-key must
+# be listed as `parent.sub` or as `sub` in backticks.
+NESTED = {
+    "limits": [f.name for f in dataclasses.fields(Limits)],
+    "planning": [f.name for f in dataclasses.fields(Planning)],
+    "owner_files": [f.name for f in dataclasses.fields(OwnerFiles)],
+}
 
 PASS_STEPS = {
     "orient": r"orient",
@@ -69,10 +81,21 @@ def plugin_skill_names() -> list[str]:
     return sorted(p.parent.name for p in (PLUGIN / "skills").glob("*/SKILL.md"))
 
 
+def renderer_profile_keys() -> set[str]:
+    fields = {f.name for f in dataclasses.fields(Profile)}
+    used = set(re.findall(r"\bp\.([a-z_]+)", RENDERER.read_text(encoding="utf-8")))
+    return used & fields
+
+
 def plugin_profile_keys() -> list[str]:
     keys = {k for ks in PROFILE_KEYS.values() for k in ks}
     keys.update(SKILL_KEYS)
+    keys.update(renderer_profile_keys())
     return sorted(keys)
+
+
+def nested_keys() -> list[tuple[str, str]]:
+    return [(parent, sub) for parent, subs in NESTED.items() for sub in subs]
 
 
 # --- Criterion 1: a section per agent and the skill, every profile key listed ---
@@ -105,6 +128,18 @@ def test_the_skill_has_a_section_in_the_methodology_document(name: str) -> None:
 @pytest.mark.parametrize("key", plugin_profile_keys())
 def test_every_profile_key_the_plugin_reads_is_listed_in_the_document(key: str) -> None:
     assert f"`{key}`" in doc_text(), f"profile key `{key}` is not listed (in backticks)"
+
+
+def test_renderer_reads_profile_keys_so_the_derivation_is_not_empty() -> None:
+    assert {"labels", "limits", "planning", "owner_files"} <= renderer_profile_keys()
+
+
+@pytest.mark.parametrize(("parent", "sub"), nested_keys())
+def test_every_nested_profile_key_is_listed_in_the_document(parent: str, sub: str) -> None:
+    text = doc_text()
+    assert f"`{parent}.{sub}`" in text or f"`{sub}`" in text, (
+        f"nested key {parent}.{sub} is not listed (as `{parent}.{sub}` or `{sub}` in backticks)"
+    )
 
 
 def test_document_names_the_claude_md_sections_roles_read() -> None:
