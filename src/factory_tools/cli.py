@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from factory_tools import claims, methodology, profile, progress
-from factory_tools.pipeline import incident_gate, paths
+from factory_tools.pipeline import incident_gate, merge_gate, paths
 
 
 def _profile_check(args: argparse.Namespace) -> int:
@@ -66,6 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
     ig.add_argument("--event", required=True)
     ig.add_argument("--previous", default="")
     ig.set_defaults(func=_incident_gate)
+
+    mg = groups.add_parser("merge-gate", help="MERGE or HOLD for a pull request, from facts only")
+    mg.add_argument("pr", help="the pull request number")
+    mg.add_argument("--repo", help="owner/name, when not this repository")
+    mg.add_argument("--session", required=True, help="the session that must hold the claims")
+    mg.add_argument("--author", help="who may give the review verdict (default: the PR author)")
+    mg.set_defaults(func=merge_gate.run_command)
     return parser
 
 
