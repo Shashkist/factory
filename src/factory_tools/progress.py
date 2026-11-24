@@ -173,9 +173,13 @@ _SLUG = re.compile(r"^[\w .:/#()+\-]{1,60}$", re.UNICODE)
 _SCRUB_FIXED = [
     (re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"), "<ip>"),
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "<email>"),
+    (re.compile(r"\bftp://\S+", re.IGNORECASE), "<url>"),
+    (re.compile(r"(?<![:/\w])//[\w.-]+\S*"), "<url>"),  # scheme-relative //host/x
+    (re.compile(r"\\\\[^\s\\]+(?:\\\S*)?"), "<path>"),  # UNC, two backslashes then host
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "<redacted>"),
 ]
 _SCRUB_PATHS = [
-    (re.compile(r"(?:[A-Za-z]:\\|/(?:root|home|Users|etc|var|tmp|c)/)\S*"), "<path>"),
+    (re.compile(r"(?:[A-Za-z]:\\|/(?:root|home|Users|etc|var|tmp|opt|srv|c)/)\S*"), "<path>"),
     (re.compile(r"\b[A-Za-z0-9_\-]{32,}\b"), "<redacted>"),
 ]
 
@@ -188,7 +192,8 @@ def _scrub_rules(repos: tuple[str, ...]) -> list[tuple[re.Pattern[str], str]]:
     own = r"(?!(?:[\w-]+\.)*shashkist\.com(?::\d+)?(?:[/?#\s]|$))"
     other = re.compile(rf"https?://{ok}{own}\S+", re.IGNORECASE)
     traversal = re.compile(
-        r"(?:https?://|\bgithub\.com/)\S*(?:/\.\.|%2e|%5c|%2f|\\)\S*", re.IGNORECASE
+        r"(?:https?://|\bgithub\.com/)\S*(?:/\.\.|%2e|%252e|%5c|%2f|\\|．|｡|。|&#46;)\S*",
+        re.IGNORECASE,
     )
     bare = re.compile(rf"\bgithub\.com/{listed}\S+", re.IGNORECASE)
     return [
@@ -501,29 +506,33 @@ def render(events: list[dict[str, Any]]) -> dict[str, Any]:
         "runner": {
             k: runner[k]
             for k in ("state", "pass_no", "budget", "pass_started", "pass_ended", "result", "note")
+        }
+        | {
+            k: scrub(v) if isinstance(v := runner[k], str) else v
+            for k in ("state", "result", "note")
         },
         "issues": [
             {
                 "issue": i["issue"],
                 "repo": i["repo"],
                 "title": scrub(i["title"]),
-                "station": i["station"],
+                "station": scrub(str(i["station"])),
             }
             for i in issues.values()
         ],
         "agents": [
             {
                 "id": scrub(a["id"]),
-                "role": a["role"],
+                "role": scrub(str(a["role"])),
                 "issue": a["issue"],
                 "repo": a["repo"],
-                "station": a["station"],
+                "station": scrub(str(a["station"])),
                 "state": a["state"],
                 "started": a["started"],
                 "last": a["last"],
                 "substeps": [
                     {
-                        "station": s["station"],
+                        "station": scrub(str(s["station"])),
                         "substep": scrub(s["substep"]),
                         "status": s["status"],
                         "issue": s["issue"],
@@ -552,8 +561,8 @@ def render(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "issue": e.get("issue"),
                 "repo": e.get("repo") or "",
                 "agent": scrub(e["agent"]),
-                "role": e["role"],
-                "station": e["station"],
+                "role": scrub(str(e["role"])),
+                "station": scrub(str(e["station"])),
                 "substep": scrub(e["substep"]),
                 "status": e["status"],
                 "detail": scrub(e.get("detail", "")),
@@ -581,7 +590,7 @@ def cmd_add(a: argparse.Namespace) -> None:
             "at": now(),
             "issue": a.issue,
             "repo": repo,
-            "title": clean(a.title or "", 90),
+            "title": clean(a.title or "", 120),
             "agent": a.agent,
             "role": a.role,
             "station": a.station,
