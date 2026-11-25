@@ -3,6 +3,7 @@
 Reads ci.yml as data, and runs the merge gate against a fake `gh` for the check names.
 """
 
+import os
 import re
 import subprocess
 from typing import Any
@@ -72,14 +73,53 @@ def test_exam_integrity_job_runs_only_for_pull_requests():
     assert cond == "github.event_name=='pull_request'", cond
 
 
+def test_acceptance_call_keeps_the_plugin_autoload_defence_on():
+    # junit-gate.yml defaults disable-pytest-plugin-autoload to true (D3 amendment 1(b), D25):
+    # leaving it out is fine, setting it to anything but true switches the defence off.
+    w = job("acceptance").get("with") or {}
+    assert w.get("disable-pytest-plugin-autoload", True) is True, w
+
+
+def test_exam_integrity_call_does_not_steer_the_checked_range():
+    # base-ref/head-sha-like inputs could make the checked range empty ("checked 0 commits: ok").
+    # Only the path inputs planned in #65 may ever appear.
+    w = job("exam-integrity").get("with") or {}
+    assert set(w) <= {"exam-paths", "ci-paths"}, w
+
+
+def test_acceptance_job_has_no_condition_that_could_skip_it():
+    assert "if" not in job("acceptance"), job("acceptance").get("if")
+    assert "continue-on-error" not in job("acceptance")
+    assert "continue-on-error" not in job("exam-integrity")
+
+
 def test_both_calls_are_pinned_to_the_same_sha():
     assert pin("acceptance", JUNIT_USES) == pin("exam-integrity", EXAM_USES)
 
 
+GIT_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+
+
 def git(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", *args], cwd=ROOT, capture_output=True, text=True, timeout=120
+        ["git", *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        stdin=subprocess.DEVNULL,
+        env=GIT_ENV,
     )
+
+
+def fetch_main(unshallow: bool = False) -> None:
+    # CI checks out shallowly: fetch main's history from origin (public repo, anonymous)
+    args = ["fetch", "-q", "--no-tags"]
+    if unshallow:
+        args.append("--unshallow")
+    fetched = git(*args, "origin", "+refs/heads/main:refs/remotes/origin/main")
+    if fetched.returncode != 0:
+        pytest.fail(f"could not fetch origin/main to check the pin: {fetched.stderr}")
 
 
 def test_the_pinned_sha_is_a_commit_on_main():
@@ -87,18 +127,16 @@ def test_the_pinned_sha_is_a_commit_on_main():
     shallow = git("rev-parse", "--is-shallow-repository").stdout.strip() == "true"
     have_sha = git("cat-file", "-e", sha + "^{commit}").returncode == 0
     have_main = git("rev-parse", "--verify", "-q", "origin/main").returncode == 0
+    fetched = False
     if shallow or not have_sha or not have_main:
-        # CI checks out shallowly: fetch main's history from origin (public repo, anonymous)
-        refspec = "+refs/heads/main:refs/remotes/origin/main"
-        args = ["fetch", "-q", "--no-tags"]
-        if shallow:
-            args.append("--unshallow")
-        fetched = git(*args, "origin", refspec)
-        if fetched.returncode != 0:
-            pytest.fail(f"could not fetch origin/main to check the pin: {fetched.stderr}")
+        fetch_main(unshallow=shallow)
+        fetched = True
     if git("cat-file", "-e", sha + "^{commit}").returncode != 0:
         pytest.fail(f"{sha} is not a commit of this repository")
     proc = git("merge-base", "--is-ancestor", sha, "origin/main")
+    if proc.returncode != 0 and not fetched:
+        fetch_main()  # a stale local origin/main must not give a false red
+        proc = git("merge-base", "--is-ancestor", sha, "origin/main")
     assert proc.returncode == 0, f"{sha} is not an ancestor of origin/main: {proc.stderr}"
 
 
