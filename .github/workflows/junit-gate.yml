@@ -1,0 +1,59 @@
+# Reusable JUnit gate: runs the caller's exam command, then fails on an empty,
+# skipped, failed or errored report.
+#
+# Caller:
+#   jobs:
+#     acceptance:
+#       uses: Shashkist/factory/.github/workflows/junit-gate.yml@<commit-sha>
+#       with:
+#         test-command: uv run pytest tests/acceptance -q --junitxml=acceptance.xml
+#
+# The judge is checked out from the Factory at the pinned commit of this
+# workflow, never from the caller's tree.
+name: JUnit gate
+
+on:
+  workflow_call:
+    inputs:
+      test-command:
+        description: Shell command that runs the exam and writes the JUnit report to junit-file.
+        type: string
+        required: true
+      junit-file:
+        description: Path of the JUnit XML report, relative to the repository root.
+        type: string
+        required: false
+        default: acceptance.xml
+
+permissions:
+  contents: read
+
+jobs:
+  junit-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # A code commit could register a pytest plugin (a pytest11 entry point).
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - name: Check out the caller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out the judge at the pinned Factory commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .factory-tools
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Run the exam
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: bash -c "$TEST_COMMAND"
+      - name: JUnit gate (no empty, skipped, failed or errored exam)
+        if: ${{ !cancelled() }}
+        env:
+          JUNIT_FILE: ${{ inputs.junit-file }}
+        run: python3 .factory-tools/src/factory_tools/ci/junit_gate.py "$JUNIT_FILE"

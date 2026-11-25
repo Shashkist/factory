@@ -1,0 +1,48 @@
+# Reusable exam-integrity check: no PR commit may change the exam (acceptance
+# tests) together with the code or CI that judges it.
+#
+# Caller (pull_request workflows only):
+#   jobs:
+#     exam-integrity:
+#       uses: Shashkist/factory/.github/workflows/exam-integrity.yml@<commit-sha>
+#
+# The judge is checked out from the Factory at the pinned commit of this
+# workflow, never from the caller's tree.
+name: Exam integrity
+
+on:
+  workflow_call:
+    inputs:
+      base-ref:
+        description: Base branch to compare against. Empty means the base branch of the calling pull request.
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  exam-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the caller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out the judge at the pinned Factory commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .factory-tools
+          persist-credentials: false
+      - name: Exam integrity per commit
+        env:
+          BASE_REF: ${{ inputs.base-ref || github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch -q origin "$BASE_REF"
+          python3 .factory-tools/src/factory_tools/ci/exam_integrity.py "origin/$BASE_REF" "$HEAD_SHA"
