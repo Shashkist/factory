@@ -26,60 +26,16 @@ jobs:
       - run: uv run mypy src
       - run: uv run pytest tests/unit -q
 
+  # The pin is a full SHA of main, so a PR runs main's judge, never its own (D25).
+  # Move the pin with a PR when the judge on main changes.
   acceptance:
-    name: Acceptance exam
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      # A code commit could register a pytest plugin (a pytest11 entry point) from src/.
-      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      - name: Run the exam
-        # Runtime defences: only the root pytest.ini (exam) configures the run;
-        # no addopts, and no conftest/config picked up from above tests/.
-        run: uv run pytest -c pytest.ini tests/acceptance -q -o addopts="" --confcutdir=tests --junitxml=acceptance.xml
-      - name: JUnit gate (no empty, skipped, failed or errored exam)
-        if: ${{ !cancelled() }}
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          script=src/factory_tools/ci/junit_gate.py
-          # On a PR run the base branch's copy so a PR cannot weaken its own gate.
-          # The bootstrap PR (base has no copy yet) uses its own.
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            git fetch -q --depth=1 origin "$BASE_REF"
-            if git show "origin/$BASE_REF:$script" > "$RUNNER_TEMP/jg.py" 2>/dev/null; then
-              script="$RUNNER_TEMP/jg.py"
-            fi
-          fi
-          python3 "$script" acceptance.xml
+    uses: Shashkist/factory/.github/workflows/junit-gate.yml@34f9188d89b057f5cf753b3112e312a6689c88b2
+    with:
+      # Only the root pytest.ini (exam) configures the run; no addopts, and no
+      # conftest/config picked up from above tests/.
+      test-command: uv run pytest -c pytest.ini tests/acceptance -q -o addopts="" --confcutdir=tests --junitxml=acceptance.xml
 
+  # Pinned to a full SHA of main for the same reason (D25).
   exam-integrity:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - name: Exam integrity per commit
-        env:
-          BASE_REF: ${{ github.base_ref }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          git fetch -q origin "$BASE_REF"
-          base="origin/$BASE_REF"
-          flag=""
-          # Run the base branch copy so a PR cannot weaken its own check.
-          # Bootstrap mode: while the base branch has no copy yet (the first PR,
-          # the one that adds it) the PR's own copy runs with --bootstrap.
-          # Every later PR finds the base copy and runs it normally.
-          if git show "$base:src/factory_tools/ci/exam_integrity.py" > "$RUNNER_TEMP/ei.py" 2>/dev/null; then
-            script="$RUNNER_TEMP/ei.py"
-          else
-            script=src/factory_tools/ci/exam_integrity.py
-            flag="--bootstrap"
-          fi
-          python3 "$script" "$base" "$HEAD_SHA" $flag
+    uses: Shashkist/factory/.github/workflows/exam-integrity.yml@34f9188d89b057f5cf753b3112e312a6689c88b2
