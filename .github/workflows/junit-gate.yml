@@ -38,7 +38,7 @@ on:
         required: false
         default: 10
       disable-pytest-plugin-autoload:
-        description: Set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 in the exam job, so a code commit cannot register a pytest plugin that rewrites results.
+        description: Set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 in the exam job, so a code commit cannot auto-register an installed pytest plugin that rewrites results.
         type: boolean
         required: false
         default: true
@@ -101,7 +101,14 @@ jobs:
       - name: Require the report
         env:
           JUNIT_FILE: ${{ inputs.junit-file }}
+          EXAM_RESULT: ${{ needs.exam.result }}
         run: |
+          # A passing report from an exam command that then exited non-zero
+          # (a coverage threshold, a second command) is not a pass.
+          if [ "$EXAM_RESULT" != "success" ]; then
+            echo "::error::the exam job ended with '$EXAM_RESULT', not success"
+            exit 1
+          fi
           if [ ! -f "report/${JUNIT_FILE##*/}" ]; then
             echo "::error::the exam job produced no report at $JUNIT_FILE"
             exit 1
