@@ -219,22 +219,47 @@ def folder_is_free(path: Path) -> bool:
     return True
 
 
-def nested_inside(main_root: Path, path: Path) -> Path | None:
-    """A worktree of the list, or any .git file or folder, lying inside path (not its own)."""
+def is_link(p: Path) -> bool:
+    """A symlink or a Windows junction (any reparse point): removal could empty its target."""
+    if os.path.islink(p):
+        return True
+    isjunction = getattr(os.path, "isjunction", None)
+    if isjunction is not None:
+        return bool(isjunction(p))
+    attrs = getattr(os.lstat(p), "st_file_attributes", 0)
+    return bool(attrs & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
+def is_bare_repo(p: Path) -> bool:
+    return (p / "HEAD").is_file() and (p / "objects").is_dir() and (p / "refs").is_dir()
+
+
+def _reraise(e: OSError) -> None:
+    raise e
+
+
+def nested_inside(main_root: Path, path: Path) -> str | None:
+    """What below path must not be deleted with it, named relative to path, else None.
+
+    Another worktree of the list, a link (symlink or junction), a `.git` file or folder, a bare
+    repository. A folder that cannot be read raises OSError. Links are never walked into.
+    """
     listed = parse_worktrees(git(main_root, "worktree", "list", "--porcelain").stdout)
     for t in listed:
         other = Path(t["worktree"]).resolve()
         if other != path and other.is_relative_to(path):
-            return other
-    for root, dirs, files in os.walk(path):
+            return other.relative_to(path).as_posix()
+    for root, dirs, files in os.walk(path, onerror=_reraise):
         here = Path(root)
         for name in dirs + files:
-            if name == ".git" and here != path:
-                return here / name
+            child = here / name
+            if (name == ".git" and here != path) or is_link(child) or (
+                name != ".git" and name in dirs and is_bare_repo(child)
+            ):
+                return child.relative_to(path).as_posix()
         if ".git" in dirs:
             dirs.remove(".git")
     return None
-
 
 def remove(
     main_root: Path, path: Path, branch: str, reason: str, dry_run: bool,
@@ -310,7 +335,9 @@ def _judge_feature(
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as e:
         say("KEPT", path, "gh unavailable: " + str(e)[:80])
         return
-    tip = git(path, "rev-parse", "HEAD").stdout.strip()
+    gone = not path.exists()
+    where, rev = (main_root, "refs/heads/" + branch) if gone else (path, "HEAD")
+    tip = git(where, "rev-parse", rev).stdout.strip()
     if not tip:
         say("KEPT", path, "cannot read the branch tip")
         return
@@ -319,10 +346,24 @@ def _judge_feature(
         lambda merged: merged_safe(main_root, tip, merged),
         lambda: remote_safe(main_root, branch, tip, dry_run),
     )
-    if go:
+    if go and gone:
+        remove_branch(main_root, path, branch, reason, dry_run)
+    elif go:
         remove(main_root, path, branch, reason, dry_run)
     else:
         say("KEPT", path, reason)
+
+
+def remove_branch(main_root: Path, path: Path, branch: str, reason: str, dry_run: bool) -> None:
+    """The folder is already gone: only the local branch is left to delete."""
+    if dry_run:
+        say("REMOVED", path, "would remove the branch, folder is gone (" + reason + ")")
+        return
+    r = git(main_root, "branch", "-D", branch)
+    if r.returncode != 0:
+        say("KEPT", path, "branch not deleted: " + (r.stderr.strip().splitlines() or ["?"])[0])
+        return
+    say("REMOVED", path, "folder is gone, branch deleted (" + reason + ")")
 
 
 def _judge_subagent(
@@ -367,12 +408,16 @@ def judge(
         return
     if path == here:
         say("KEPT", path, "the worktree this command runs from")
-    elif not path.exists():
+    elif not path.exists() and not (m and "locked" not in wt):
         say("KEPT", path, "folder missing, left to git worktree prune")
     elif "locked" in wt:
         say("KEPT", path, "locked" + (": " + wt["locked"] if wt["locked"] else ""))
-    elif (m or is_subagent(branch, path)) and (inner := nested_inside(main_root, path)):
-        say("KEPT", path, f"holds another repository or worktree: {inner}")
+    elif (
+        path.exists()
+        and (m or is_subagent(branch, path))
+        and (inner := nested_inside(main_root, path))
+    ):
+        say("KEPT", path, f"holds a link, another repository or a worktree: {inner}")
     elif m:
         _judge_feature(branch, int(m.group(1)), main_root, path, args.dry_run, gh)
     elif is_subagent(branch, path):
@@ -479,7 +524,6 @@ def run_prune(args: argparse.Namespace) -> int:
     main_root = Path(trees[0]["worktree"]).resolve()
     if not args.dry_run and not adding_now(main_root):
         git(here, "worktree", "prune")
-        trees = parse_worktrees(git(here, "worktree", "list", "--porcelain").stdout)
     for wt in trees[1:]:
         try:
             judge(wt, main_root, here, args, pass_start, gh)
