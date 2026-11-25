@@ -331,6 +331,8 @@ in force · factory · 2026-11-25 · revertible
 **Alternatives.** Run-level `referenced_workflows` only (fails spoof 1, see Finding); hold every PR that changes `ci.yml` (blocks every pin move); a required-workflow ruleset on the repository (owner setting, and the gate must work without it).
 **Revert.** Drop the four conditions from `merge_gate.py`; D28's exact-name rule stays.
 
+**Amendment 1 (2026-11-25, review round 1 of PR #83).** GitHub evaluates expressions in `jobs.<id>.name`, and a job that calls a local workflow shows as `<caller> / <called job>`, so a shown name in the file is not always the name of the check. Point 4 also holds when (a) any job of the head's `ci.yml` has a `name:` containing `${{`, or (b) any job's shown name contains ` / `; and when (c) a job's `uses:` is not a string (a HOLD line, never a traceback). Today neither repository's `ci.yml` has such a name, so no real PR is held. The `ci.yml` read takes only the raw form (no base64 branch) and refuses duplicate YAML keys; the PR's repository comes from `pr["url"]`; the HOLD line names the first failed condition in the order 1 to 4, "on main" being part of 3. Delivered by a rebuilt branch `f/80-gate-pinned-workflows-2` (D103 of Learning Factory: exam commits first, then code), which replaces PR #83.
+
 ## D30 · #63: `v0.1.0` is today's green `main` (95753bb), and its existence is checked at close, not in the exam
 in force · factory · 2026-11-25 · revertible
 
