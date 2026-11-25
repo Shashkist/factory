@@ -28,6 +28,7 @@ OLD = "0123456789abcdef0123456789abcdef01234567"
 EXAM_FILE = "tests/acceptance/test_issue_5_x.py"
 CODE_FILE = "src/factory_tools/thing.py"
 SESSION = "lf-pass-1"
+EXAM_GATE = "acceptance / gate"
 
 SITECUSTOMIZE = '''\
 import shutil
@@ -121,9 +122,16 @@ class Gate:
         self.pr = pr
         self.files: dict[str, list[str]] = {OLD: [EXAM_FILE], HEAD: [CODE_FILE]}
         self.issues: dict[str, list[dict[str, Any]]] = {"5": [claim_comment()]}
+        # The conclusion of the exam gate check added to a non-empty rollup that lacks one
+        # (#76: the gate needs it to be SUCCESS). None adds nothing, so it is missing.
+        self.exam_gate: str | None = "SUCCESS"
 
     def write(self) -> None:
-        repo = {"prs": {"9": self.pr}, "commits": self.files, "issues": self.issues}
+        pr = dict(self.pr)
+        rollup = list(pr.get("statusCheckRollup") or [])
+        if rollup and self.exam_gate and not any(c.get("name") == EXAM_GATE for c in rollup):
+            pr["statusCheckRollup"] = rollup + [check(EXAM_GATE, self.exam_gate)]
+        repo = {"prs": {"9": pr}, "commits": self.files, "issues": self.issues}
         self.state_path.write_text(
             json.dumps({"default": HERE, "calls": [], "writes": [],
                         "repos": {HERE: repo, OTHER: repo}}),
