@@ -259,3 +259,11 @@ in force · factory · 2026-11-25 · revertible
 **Why.** The spec allows no mixed view; the adjacent form is how the factory's own titles name a second repository's item, and it keeps every exam case of #54 as strict as written ("Review round 2 of factory PR #53" still moves).
 **Alternatives.** Whole word anywhere in the title (the PR's first version; misplaces host work about the factory); require the `owner/name#n` prefix only (breaks the #54 criterion 2 case).
 **Revert.** Return `crewRef` to the whole-word match and drop the new exam cases.
+
+## D22 · #5: reusable CI workflows ship in four slices, and the judge code is fetched at `job.workflow_sha`
+in force · factory · 2026-11-25 · revertible
+
+**Decision.** #5 is sliced into four issues of one PR each: (A) #5, the reusable `exam-integrity.yml` and `junit-gate.yml` (`on: workflow_call`); (B) #61, this repository's `ci.yml` calls them; (C) #62, the reusable incident workflow; (D) #63, `docs/ci.md` and the tag `v0.1.0`. A reusable workflow fetches the judge code (`factory-tools`) from `job.workflow_repository` at `job.workflow_sha`, the GitHub contexts for the workflow that defines the running job (GitHub changelog, August 2026), so a caller pinned to a tag or SHA runs exactly that commit's judge and never `main` or its own PR's code. Dogfooding (B) calls the workflows by a full SHA of `main`, which the #1 pinning case requires and Dependabot keeps current; on a PR this runs main's judge, the same "base branch copy decides" property `ci.yml` has today.
+**Why.** One PR for all of #5 is well over the ~400-line limit, and a PR cannot call a reusable workflow that is not on `main` yet, so A must land before B. `job.workflow_sha` needs no extra input from the caller and no `id-token: write`; a caller-supplied ref input could drift from the pinned `uses:` ref.
+**Alternatives.** A required `factory-ref` input the caller sets to its pin (can disagree with the `uses:` ref); the OIDC `job_workflow_sha` claim (needs `id-token: write` in every client); a local `uses: ./.github/workflows/...` for dogfooding (runs the PR's own copy of the judge).
+**Revert.** Merge the four issues back into #5, and replace `job.workflow_sha` with a `factory-ref` input.
