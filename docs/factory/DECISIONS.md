@@ -276,3 +276,11 @@ in force · factory · 2026-11-25 · revertible
 **Why.** A judge that shares a job with the code it judges can be rewritten by it (files, `$GITHUB_PATH`, `$GITHUB_ENV`); a separate job starts clean. Most clients are private repositories.
 **Alternatives.** Check out the judge after the tests in the same job (PR code can still plant `.git` hooks and `$GITHUB_ENV` lines); add exam paths in this PR (a judge change on top of two workflows, over the size limit).
 **Revert.** Fold the two jobs back into one and restore the fetch; close #65 into #5.
+
+## D24 · #5 review round 2: the manager's fixes close the round, each verified narrowly; exam cases for them go to #67
+in force · factory · 2026-11-25 · revertible
+
+**Decision.** Review round 2 of PR #66 (CHANGES at 76b7366) asked for one line (`gate` job `if: ${{ always() }}`) and two nits. The manager fixed them on the branch (Learning Factory D145), and each fresh verifier found one more small hole in the same job: an empty download name fetches every artifact of the run (fixed with a `'no-exam-report'` fallback, dcc725b) and the gate ignored `needs.exam.result` (fixed: the gate is red unless the exam job succeeded, e2ff05f). Round 2 closes after a verifier that checks only the e2ff05f diff and the whole `gate` job once more; any further item becomes a follow-up issue, not another round. The exam cases for all round-2 hardening (judge last and `/usr/bin/python3 -I`, `always()`, non-empty name, exam result, autoload default) are #67, because exam integrity refuses an exam commit after code on this branch (D23).
+**Why.** The fixes are one to six lines each and only tighten the gate; a third rebuild of the branch for exam-before-code costs a pass and protects nothing that #67 does not.
+**Alternatives.** Rebuild as `-3` with the new exam cases first (another full CI and review cycle); leave the holes for #67 (ships a gate that can pass a red exam).
+**Revert.** Reopen the review with a round 3 on PR #66, or move #67's cases into a rebuilt branch.
