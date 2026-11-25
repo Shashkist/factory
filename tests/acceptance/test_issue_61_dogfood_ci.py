@@ -84,15 +84,22 @@ def git(*args: str) -> subprocess.CompletedProcess[str]:
 
 def test_the_pinned_sha_is_a_commit_on_main():
     sha = pin("acceptance", JUNIT_USES)
-    if git("cat-file", "-e", sha + "^{commit}").returncode != 0:
-        if git("rev-parse", "--is-shallow-repository").stdout.strip() == "true":
-            pytest.skip("shallow checkout: the pinned commit is not in the local history")
-        pytest.fail(f"{sha} is not a commit of this repository")
+    shallow = git("rev-parse", "--is-shallow-repository").stdout.strip() == "true"
+    have_sha = git("cat-file", "-e", sha + "^{commit}").returncode == 0
     have_main = git("rev-parse", "--verify", "-q", "origin/main").returncode == 0
-    # a PR's HEAD contains main, so without origin/main HEAD is the next best ancestor test
-    main = "origin/main" if have_main else "HEAD"
-    proc = git("merge-base", "--is-ancestor", sha, main)
-    assert proc.returncode == 0, f"{sha} is not an ancestor of {main}: {proc.stderr}"
+    if shallow or not have_sha or not have_main:
+        # CI checks out shallowly: fetch main's history from origin (public repo, anonymous)
+        refspec = "+refs/heads/main:refs/remotes/origin/main"
+        args = ["fetch", "-q", "--no-tags"]
+        if shallow:
+            args.append("--unshallow")
+        fetched = git(*args, "origin", refspec)
+        if fetched.returncode != 0:
+            pytest.fail(f"could not fetch origin/main to check the pin: {fetched.stderr}")
+    if git("cat-file", "-e", sha + "^{commit}").returncode != 0:
+        pytest.fail(f"{sha} is not a commit of this repository")
+    proc = git("merge-base", "--is-ancestor", sha, "origin/main")
+    assert proc.returncode == 0, f"{sha} is not an ancestor of origin/main: {proc.stderr}"
 
 
 def test_ci_no_longer_runs_the_judge_scripts_from_the_checkout():
