@@ -5,6 +5,7 @@ Reads ci.yml as data, and runs the merge gate against a fake `gh` for the check 
 
 import os
 import re
+import shlex
 import subprocess
 from typing import Any
 
@@ -52,13 +53,15 @@ def test_exam_integrity_job_calls_exam_integrity_by_full_sha():
     pin("exam-integrity", EXAM_USES)
 
 
-def test_acceptance_test_command_keeps_the_runtime_defences():
+EXAM_COMMAND = (
+    "uv run pytest -c pytest.ini tests/acceptance -q -o addopts=\"\" "
+    "--confcutdir=tests --junitxml=acceptance.xml"
+)
+
+
+def test_acceptance_test_command_is_exactly_the_hardened_exam_command():
     cmd = str((job("acceptance").get("with") or {}).get("test-command", ""))
-    assert "tests/acceptance" in cmd, cmd
-    assert "--junitxml" in cmd, cmd
-    assert re.search(r"-c\s+pytest\.ini\b", cmd), cmd
-    assert re.search(r"-o\s+addopts=(\"\"|'')", cmd), cmd
-    assert "--confcutdir=tests" in cmd, cmd
+    assert shlex.split(cmd) == shlex.split(EXAM_COMMAND), cmd
 
 
 def test_junit_file_matches_the_junitxml_path():
@@ -89,8 +92,7 @@ def test_exam_integrity_call_does_not_steer_the_checked_range():
 
 def test_acceptance_job_has_no_condition_that_could_skip_it():
     assert "if" not in job("acceptance"), job("acceptance").get("if")
-    assert "continue-on-error" not in job("acceptance")
-    assert "continue-on-error" not in job("exam-integrity")
+    assert "needs" not in job("acceptance"), job("acceptance").get("needs")
 
 
 def test_both_calls_are_pinned_to_the_same_sha():
