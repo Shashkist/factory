@@ -267,6 +267,7 @@ class Gate:
                 prefix, INTEGRITY_FILE if integrity else GATE_FILE, wf_repo=self.wf_repo
             )
             runs[RUN_ID] = real_run(
+                head=self.pr["headRefOid"],
                 refs=[
                     (uses(GATE_FILE, wf_repo=self.wf_repo), PIN),
                     (uses(INTEGRITY_FILE, wf_repo=self.wf_repo), PIN),
