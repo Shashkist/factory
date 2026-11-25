@@ -1,0 +1,27 @@
+# Throwaway live check of the reusable workflows (#5). Never merged.
+name: Scratch 5 live caller
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  pass:
+    uses: Shashkist/factory/.github/workflows/junit-gate.yml@34f9188d89b057f5cf753b3112e312a6689c88b2
+    with:
+      test-command: printf '<testsuites><testsuite name="s" tests="1" failures="0" errors="0" skipped="0"><testcase classname="c" name="t"/></testsuite></testsuites>' > acceptance.xml
+  missing:
+    uses: Shashkist/factory/.github/workflows/junit-gate.yml@34f9188d89b057f5cf753b3112e312a6689c88b2
+    with:
+      test-command: "true"
+  nested:
+    uses: Shashkist/factory/.github/workflows/junit-gate.yml@34f9188d89b057f5cf753b3112e312a6689c88b2
+    with:
+      junit-file: build/reports/acceptance.xml
+      test-command: mkdir -p build/reports && printf '<testsuites><testsuite name="s" tests="1" failures="0" errors="0" skipped="0"><testcase classname="c" name="t"/></testsuite></testsuites>' > build/reports/acceptance.xml
+  failed-after-report:
+    uses: Shashkist/factory/.github/workflows/junit-gate.yml@34f9188d89b057f5cf753b3112e312a6689c88b2
+    with:
+      test-command: printf '<testsuites><testsuite name="s" tests="1" failures="0" errors="0" skipped="0"><testcase classname="c" name="t"/></testsuite></testsuites>' > acceptance.xml; exit 1
+  integrity:
+    uses: Shashkist/factory/.github/workflows/exam-integrity.yml@34f9188d89b057f5cf753b3112e312a6689c88b2

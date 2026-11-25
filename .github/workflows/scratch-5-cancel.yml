@@ -1,0 +1,12 @@
+# Throwaway live check (#5): this run is cancelled while the exam sleeps; the gate must not be skipped.
+name: Scratch 5 cancel
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  slow:
+    uses: Shashkist/factory/.github/workflows/junit-gate.yml@34f9188d89b057f5cf753b3112e312a6689c88b2
+    with:
+      test-command: sleep 300
