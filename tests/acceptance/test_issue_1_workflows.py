@@ -4,6 +4,7 @@ import re
 import tomllib
 
 import pytest
+import yaml
 from helpers import ROOT, workflow_text
 
 WF_DIR = ROOT / ".github" / "workflows"
@@ -32,25 +33,35 @@ def test_ci_workflow_runs_all_checks() -> None:
     assert "tests/unit" in t
     assert "tests/acceptance" in t
     assert "--junitxml" in t
-    assert "junit_gate" in t
-    assert "exam_integrity" in t
+    # D25: the judges are calls to the reusable workflows, pinned by a full SHA
+    assert re.search(r"junit-gate\.yml@[0-9a-f]{40}", t), "no pinned junit-gate.yml call"
+    assert re.search(r"exam-integrity\.yml@[0-9a-f]{40}", t), "no pinned exam-integrity.yml call"
 
 
 def test_ci_workflow_exam_integrity_runs_on_pull_requests() -> None:
-    lines = workflow_text("ci.yml").splitlines()
-    idx = [i for i, ln in enumerate(lines) if "exam_integrity" in ln]
-    assert idx, "no exam_integrity step"
-    block = "\n".join(lines[max(0, idx[0] - 15) : idx[-1] + 5])
-    assert "pull_request" in block
+    # D25: the calling job carries the pull_request condition
+    jobs = yaml.safe_load(workflow_text("ci.yml"))["jobs"]
+    calls = [
+        j
+        for j in jobs.values()
+        if re.search(r"exam-integrity\.yml@[0-9a-f]{40}$", str(j.get("uses")))
+    ]
+    assert calls, "no job calls exam-integrity.yml@<sha>"
+    for j in calls:
+        assert "pull_request" in str(j.get("if", "")), j
 
 
-def test_bootstrap_mode_is_a_fallback_documented_in_a_comment() -> None:
+def test_judge_is_not_run_from_the_prs_tree() -> None:
+    # D25 (replaces the bootstrap-comment case): both calls are pinned to a full SHA and
+    # ci.yml runs no exam_integrity.py / junit_gate.py from the checkout.
     t = workflow_text("ci.yml")
-    assert "--bootstrap" in t
-    comments = [ln for ln in t.splitlines() if ln.strip().startswith("#")]
-    assert any("bootstrap" in c.lower() for c in comments), "no comment on bootstrap"
-    # the base branch copy is preferred: fetched from the base ref with git show
-    assert "git show" in t
+    lines = [ln for ln in t.splitlines() if not ln.strip().startswith("#")]
+    code = chr(10).join(lines)
+    assert re.search(r"junit-gate\.yml@[0-9a-f]{40}", code)
+    assert re.search(r"exam-integrity\.yml@[0-9a-f]{40}", code)
+    assert "exam_integrity.py" not in code
+    assert "junit_gate.py" not in code
+    assert "--bootstrap" not in code
 
 
 @pytest.mark.parametrize("name", workflows() or ["<none>"])
