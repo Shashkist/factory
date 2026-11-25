@@ -148,6 +148,20 @@ def broken(tmp_path, target, **kw):
     )
 
 
+def assert_holds_naming_job(result, job_id, other):
+    """HOLD (exit 1, no MERGE), a line naming the job `job_id` of ci.yml, none naming `other`.
+
+    The file reason of an expression-named job is about the job, so it names the job id, not
+    the check name (#86, round 2 nit 3): the raw expression text is not what is asserted.
+    """
+    code, lines = result
+    assert code == 1, result
+    assert "MERGE" not in lines, lines
+    assert lines and all(ln.startswith("HOLD: ") for ln in lines), lines
+    assert any(f"'{job_id}'" in ln for ln in holds(lines)), (job_id, lines)
+    assert not any(other.lower() in ln.lower() for ln in holds(lines)), (other, lines)
+
+
 def assert_holds_naming(result, name, other):
     """HOLD (exit 1, no MERGE), a line naming `name`, and none naming the unbroken check."""
     code, lines = result
@@ -439,7 +453,7 @@ def test_plain_job_named_by_an_expression_like_the_gate_with_a_skipped_caller_ho
     callers = [caller("acceptance", GATE_FILE, if_=GATE_IF_FALSE), good_callers()[1]]
     fake = plain_job("gate", "\"${{ 'acceptance / gate' }}\"")
     gh = world(tmp, rollup=rollup, callers=callers, extra_jobs=[fake])
-    assert_holds_naming(gh.run(), GATE, INTEGRITY)
+    assert_holds_naming_job(gh.run(), "gate", INTEGRITY)
 
 
 def test_plain_job_named_by_an_expression_like_exam_integrity_with_a_skipped_caller_holds(tmp):
@@ -452,7 +466,7 @@ def test_plain_job_named_by_an_expression_like_exam_integrity_with_a_skipped_cal
     callers = [good_callers()[0], caller("exam-integrity", INTEGRITY_FILE, if_=GATE_IF_FALSE)]
     fake = plain_job("fake", "\"x / ${{ 'exam-integrity' }}\"")
     gh = world(tmp, rollup=rollup, callers=callers, extra_jobs=[fake])
-    assert_holds_naming(gh.run(), "exam-integrity", GATE)
+    assert_holds_naming_job(gh.run(), "fake", GATE)
 
 
 def test_job_shown_with_a_slash_calling_a_local_workflow_with_a_skipped_caller_holds(tmp):

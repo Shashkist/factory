@@ -30,6 +30,9 @@ Run as: python fake_gh_merge_gate.py <gh args>, with FAKE_GH_STATE pointing at a
   from `compare` (`{"o/r": {"<sha>": "behind"}}`; a base other than `main` or an unknown sha is a
   404). Actions runs and contents are only served for the repository the pull request is in; the
   workflows repository's compare is served for any known repository.
+* `api repos/<o>/<r>/actions/jobs/<id>` returns the job stored under `jobs` for that repository
+  (`{"jobs": {"o/r": {"<id>": {...}}}}`; a missing one is a 404; an entry `{"__error__": "<text>"}`
+  fails with that text, as a server error would). Served like the runs (#86).
 * `api` accepts `--paginate` and returns the whole list in one object (the gate may use it).
 * `issue view <n> --json comments` returns {"comments": [...]} (empty for an unknown issue).
 * Anything that writes (pr merge, comment, review, edit, close, api -X ...) is recorded in
@@ -134,11 +137,14 @@ elif group == "api":
         save()
         print(json.dumps({"status": status, "ahead_by": 0, "behind_by": 0}))
     elif kind == "actions":
-        if len(parts) != 6 or parts[4] != "runs":
+        if len(parts) != 6 or parts[4] not in ("runs", "jobs"):
             fail("unsupported api call: " + " ".join(args))
-        found = s.get("runs", {}).get(target.lower(), {}).get(parts[5])
+        what = "workflow run" if parts[4] == "runs" else "job"
+        found = s.get(parts[4], {}).get(target.lower(), {}).get(parts[5])
         if found is None:
-            fail("404 no workflow run " + parts[5])
+            fail("404 no " + what + " " + parts[5])
+        if "__error__" in found:
+            fail(found["__error__"])
         save()
         print(json.dumps(found))
     else:
