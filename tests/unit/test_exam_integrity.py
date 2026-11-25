@@ -138,6 +138,21 @@ def test_pytest_config_is_exam_whatever_exam_paths_says() -> None:
     assert check([["labs/m/tests/unit/conftest.py", CODE]], exam_paths=globs) == []
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "labs/m/tests/unit/conftest.py",
+        "x/tests/unit/pytest.ini",
+        "a/tests/unit/setup.cfg",
+        "pkg/tests/unit/tox.ini",
+        "foo/tests/unit/.pytest.ini",
+    ],
+)
+def test_defaults_exempt_only_the_top_level_unit_folder(path: str) -> None:
+    assert check([[path, CODE]])
+    assert check([["tests/unit/conftest.py", CODE]]) == []
+
+
 def test_parse_splits_one_value_and_never_reads_a_flag_from_it() -> None:
     a = exam_integrity._parse(["b", "h", "--exam-paths=x --bootstrap", "--ci-paths=y"])
     assert a.exam_paths == ["x", "--bootstrap"]

@@ -58,8 +58,9 @@ def _in_unit(parts: list[str]) -> bool:
 def _is_exam(path: str, exam_paths: list[str] | None = None) -> bool:
     parts = path.split("/")
     # pytest configuration outside tests/unit/ can skip or rewrite exam results,
-    # whatever the exam globs say
-    if parts[-1] in PYTEST_CONFIG and not _in_unit(parts):
+    # whatever the exam globs say; the defaults exempt only the top-level tests/unit/
+    in_unit = _in_unit(parts) if exam_paths is not None else parts[:2] == ["tests", "unit"]
+    if parts[-1] in PYTEST_CONFIG and not in_unit:
         return True
     if exam_paths is not None:
         return _matches(path, exam_paths)
