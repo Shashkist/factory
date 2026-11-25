@@ -113,7 +113,8 @@ var selRepo = "";   // the repository whose view is shown: from #/<short name>, 
 
 function pickRepo(s) {
   var keys = Object.keys(s.repos || {});
-  var want = decodeURIComponent((/^#\/(.*)$/.exec(location.hash) || [])[1] || "");
+  var want = "";
+  try { want = decodeURIComponent((/^#\/(.*)$/.exec(location.hash) || [])[1] || ""); } catch (e) { /* a link cut mid-escape: open the host */ }
   return keys.filter(function (r) { return shortRepo(r) === want; })[0] || keys[0] || "";
 }
 
@@ -125,7 +126,7 @@ function renderTabs(s) {
   var nav = document.getElementById("repo-tabs");
   nav.textContent = "";
   Object.keys(s.repos || {}).forEach(function (repo) {
-    var a = el("a", shortRepo(repo) + " " + s.repos[repo].issues.open, repo === selRepo ? "tab sel" : "tab");
+    var a = el("a", shortRepo(repo) + " " + ((s.repos[repo].issues || {}).open || 0), repo === selRepo ? "tab sel" : "tab");
     a.href = "#/" + encodeURIComponent(shortRepo(repo));
     if (repo === selRepo) a.setAttribute("aria-current", "page");
     nav.appendChild(a);
@@ -137,7 +138,8 @@ function render(s) {
   lastGenerated = s.generated_at;
   hostRepo = Object.keys(s.repos || {})[0] || "";
   selRepo = pickRepo(s);
-  var cur = (s.repos || {})[selRepo] || { issues: { open: 0, closed: 0, by_status: {} }, claim: null, throughput: s.throughput };
+  var cur = (s.repos || {})[selRepo] || { issues: s.issues, claim: s.claim, throughput: s.throughput };
+  cur.issues = cur.issues || { open: 0, closed: 0, by_status: {} };
   renderTabs(s);
   showAge();
 
@@ -191,7 +193,7 @@ function render(s) {
   var runs = s.runs || {};
   var health = document.getElementById("health");
   health.textContent = "";
-  Object.keys(runs).filter(function (r) { return r === selRepo; }).forEach(function (repo) {   // runs are nested by repository, then workflow
+  [selRepo].filter(function (r) { return runs[r]; }).forEach(function (repo) {   // runs are nested by repository, then workflow
     var names = ["CI", "Deploy", "Smoke"].filter(function (n) { return runs[repo][n]; });
     if (!names.length) names = [""];
     names.forEach(function (name) {
@@ -214,6 +216,10 @@ function render(s) {
   var t = cur.throughput;
   var spark = document.getElementById("spark");
   spark.textContent = "";
+  if (!t || !arr(t.closed_per_day).length) {
+    document.getElementById("throughput").textContent = "No throughput data.";
+    return;
+  }
   spark.appendChild(sparkline(t.closed_per_day));
   document.getElementById("throughput").textContent =
     "Closed per day, last 14 days. Median lead time " +
@@ -351,8 +357,10 @@ function agentCard(a, titles, workers, generated) {
   subs.forEach(function (s) {
     var icon = s.status === "start" ? (liveSubstep(a, s, subs, generated) ? LIVE_ICONS.start : "–") : (LIVE_ICONS[s.status] || "");
     var r = stepRef(a, s);
-    ul.appendChild(lel("li", icon + " " + S(s.substep) + (r.issue > 0 ? " " + laneLabel(r.repo, r.issue) : ""), "",
-      { "data-substep": S(s.substep), "data-status": S(s.status) }));
+    var li = lel("li", icon + " " + S(s.substep) + (r.issue > 0 ? " " + laneLabel(r.repo, r.issue) : ""), "",
+      { "data-substep": S(s.substep), "data-status": S(s.status) });
+    if (S(s.detail)) li.appendChild(el("div", S(s.detail), "live-detail muted"));
+    ul.appendChild(li);
   });
   card.appendChild(ul);
   workers.forEach(function (w) { card.appendChild(workerCard(w)); });
@@ -383,18 +391,15 @@ var LANE_MARK = { done: "✓", active: "●", failed: "✗", waiting: "⏸", pen
 var ROLE_STATION = { researcher: "plan", planner: "plan", "exam-writer": "exam", implementer: "build", reviewer: "check" };
 var foldOpen = Object.create(null);   // collapsible section -> open, kept across polls
 
-function crewRef(title, d) {   // "#12" is this repository's issue; "factory#1" names a repository present in the snapshot
+function crewRef(title) {   // "#12" is the host's issue; "factory#1" names a repository present in the snapshot
   var m = /([\w.-]+)?#(\d+)/.exec(S(title));
   if (!m) return null;
   var issue = Number(m[2]), short = (m[1] || "").toLowerCase();
-  if (!short || short === "learning_factory") return { repo: "", issue: issue };
-  if (short !== "factory") return { repo: "", issue: issue };   // "PR#547": not a repository name, so this repository's issue
-  var issues = arr(d.issues);
-  for (var j = 0; j < issues.length; j++) {
-    var repo = S(issues[j].repo);
-    if (repo && repo.split("/").pop().toLowerCase() === short) return { repo: repo, issue: issue };
+  var repos = Object.keys((snap && snap.repos) || {});
+  for (var j = 0; j < repos.length; j++) {
+    if (short && shortRepo(repos[j]).toLowerCase() === short) return { repo: repos[j], issue: issue };
   }
-  return null;
+  return { repo: "", issue: issue };   // no prefix, or "PR#547": not a repository name, so the host's issue
 }
 
 function prFor(issue, repo) {
@@ -456,7 +461,7 @@ function laneData(d) {
     });
   });
   crewNodes(arr(d.crew).slice(0, 1)).forEach(function (n) {   // the current pass only: older passes' agents confuse the lane
-    var r = crewRef(n.title, d), k = r ? laneKey(r.repo, r.issue) : "";
+    var r = crewRef(n.title), k = r ? laneKey(r.repo, r.issue) : "";
     if (r && lanes[k]) lanes[k].crew.push(n);
   });
   return Object.keys(lanes).map(function (k) {
@@ -682,9 +687,28 @@ function inView(d) {   // live.json narrowed to the selected repository (the run
   var view = {};
   Object.keys(d).forEach(function (k) { view[k] = d[k]; });
   view.issues = mine(d.issues);
-  view.agents = arr(d.agents).filter(function (a) {
-    var refs = arr(a.substeps).filter(function (x) { return Number(stepRef(a, x).issue) > 0; });
-    return !refs.length || refs.some(function (x) { return canonRepo(stepRef(a, x).repo) === selRepo; });
+  view.agents = [];
+  arr(d.agents).forEach(function (a) {   // keep each agent's steps of this repository only
+    var subs = arr(a.substeps);
+    var own = subs.filter(function (x) {
+      var r = stepRef(a, x);
+      return !(Number(r.issue) > 0) || canonRepo(r.repo) === selRepo;
+    });
+    if (subs.length && !own.length) return;
+    var copy = {};
+    Object.keys(a).forEach(function (k) { copy[k] = a[k]; });
+    copy.substeps = own;
+    view.agents.push(copy);
+  });
+  view.log = arr(d.log).filter(function (e) { return !(Number(e.issue) > 0) || canonRepo(S(e.repo)) === selRepo; });
+  view.crew = arr(d.crew).map(function prune(n) {
+    var c = {};
+    Object.keys(n).forEach(function (k) { c[k] = n[k]; });
+    c.children = arr(n.children).filter(function (k) {
+      var r = crewRef(k.title);
+      return !r || canonRepo(r.repo) === selRepo;
+    }).map(prune);
+    return c;
   });
   return view;
 }
@@ -717,14 +741,14 @@ function renderLive(full) {
   });
   // Workers carry no issue: one running agent with the same role owns the worker, else it goes in the row.
   var agents = arr(d.agents);
-  var mine = Object.create(null);
+  var ownWorkers = Object.create(null);
   var loose = [];
   arr(d.workers).forEach(function (w) {
     var same = agents.filter(function (a) { return a.state === "running" && a.role === w.role; });
-    if (same.length === 1) (mine[same[0].id] = mine[same[0].id] || []).push(w);
+    if (same.length === 1) (ownWorkers[same[0].id] = ownWorkers[same[0].id] || []).push(w);
     else loose.push(w);
   });
-  agents.forEach(function (a) { station(a.station).appendChild(agentCard(a, titles, mine[a.id] || [], d.generated_at)); });
+  agents.forEach(function (a) { station(a.station).appendChild(agentCard(a, titles, ownWorkers[a.id] || [], d.generated_at)); });
   var stationsBox = el("div");
   stationsBox.appendChild(line);
   if (loose.length) {
