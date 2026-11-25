@@ -7,10 +7,18 @@ import pytest
 import yaml
 from helpers import ROOT, workflow_text
 
-# Transitional per D26: the three judge cases accept either the inline form or the
-# reusable form (pinned junit-gate.yml / exam-integrity.yml calls), each checked whole.
-# PR C tightens them to the reusable form only.
 WF_DIR = ROOT / ".github" / "workflows"
+JUNIT = re.compile(r"^Shashkist/factory/\.github/workflows/junit-gate\.yml@[0-9a-f]{40}$")
+EXAM = re.compile(r"^Shashkist/factory/\.github/workflows/exam-integrity\.yml@[0-9a-f]{40}$")
+
+
+def ci_jobs() -> dict:
+    return dict(yaml.safe_load(workflow_text("ci.yml"))["jobs"])
+
+
+def called(job: str, rx: re.Pattern) -> bool:
+    j = ci_jobs().get(job)
+    return isinstance(j, dict) and bool(rx.match(str(j.get("uses", ""))))
 
 
 def workflows() -> list[str]:
@@ -28,63 +36,6 @@ def test_ci_workflow_exists_and_runs_on_pull_requests_and_main_pushes() -> None:
     assert "main" in t
 
 
-def _code(t: str) -> str:
-    return "\n".join(ln for ln in t.splitlines() if not ln.strip().startswith("#"))
-
-
-def _pinned(t: str) -> bool:
-    return bool(
-        re.search(r"junit-gate\.yml@[0-9a-f]{40}", t)
-        and re.search(r"exam-integrity\.yml@[0-9a-f]{40}", t)
-    )
-
-
-def _inline_checks_ok(t: str) -> bool:
-    return "junit_gate" in t and "exam_integrity" in t
-
-
-def _inline_integrity_pr_ok(t: str) -> bool:
-    lines = t.splitlines()
-    idx = [i for i, ln in enumerate(lines) if "exam_integrity" in ln]
-    if not idx:
-        return False
-    block = "\n".join(lines[max(0, idx[0] - 15) : idx[-1] + 5])
-    return "pull_request" in block
-
-
-def _inline_bootstrap_ok(t: str) -> bool:
-    comments = [ln for ln in t.splitlines() if ln.strip().startswith("#")]
-    return (
-        "--bootstrap" in t
-        and any("bootstrap" in c.lower() for c in comments)
-        and "git show" in t
-    )
-
-
-def _reusable_checks_ok(t: str) -> bool:
-    return _pinned(t)
-
-
-def _reusable_integrity_pr_ok(t: str) -> bool:
-    jobs = yaml.safe_load(t)["jobs"]
-    calls = [
-        j
-        for j in jobs.values()
-        if re.search(r"exam-integrity\.yml@[0-9a-f]{40}$", str(j.get("uses")))
-    ]
-    return bool(calls) and all("pull_request" in str(j.get("if", "")) for j in calls)
-
-
-def _reusable_no_local_judge_ok(t: str) -> bool:
-    code = _code(t)
-    return (
-        _pinned(code)
-        and "exam_integrity.py" not in code
-        and "junit_gate.py" not in code
-        and "--bootstrap" not in code
-    )
-
-
 def test_ci_workflow_runs_all_checks() -> None:
     t = workflow_text("ci.yml")
     assert "ruff check" in t
@@ -93,17 +44,28 @@ def test_ci_workflow_runs_all_checks() -> None:
     assert "tests/unit" in t
     assert "tests/acceptance" in t
     assert "--junitxml" in t
-    assert _inline_checks_ok(t) or _reusable_checks_ok(t), "neither inline nor reusable judges"
+    # D25: the judges are calls to the reusable workflows, pinned by a full SHA
+    assert called("acceptance", JUNIT), "acceptance does not call junit-gate.yml@<sha>"
+    assert called("exam-integrity", EXAM), "exam-integrity does not call exam-integrity.yml@<sha>"
 
 
 def test_ci_workflow_exam_integrity_runs_on_pull_requests() -> None:
-    t = workflow_text("ci.yml")
-    assert _inline_integrity_pr_ok(t) or _reusable_integrity_pr_ok(t)
+    # D25: the calling job carries exactly the pull_request condition
+    cond = "".join(str(ci_jobs()["exam-integrity"].get("if", "")).split())
+    assert cond == "github.event_name=='pull_request'", cond
 
 
-def test_bootstrap_mode_is_a_fallback_documented_in_a_comment() -> None:
+def test_judge_is_not_run_from_the_prs_tree() -> None:
+    # D25 (replaces the bootstrap-comment case): both calls are pinned to a full SHA and
+    # ci.yml runs no exam_integrity.py / junit_gate.py from the checkout.
     t = workflow_text("ci.yml")
-    assert _inline_bootstrap_ok(t) or _reusable_no_local_judge_ok(t)
+    code = chr(10).join(ln for ln in t.splitlines() if not ln.strip().startswith("#"))
+    assert called("acceptance", JUNIT)
+    assert called("exam-integrity", EXAM)
+    assert "exam_integrity.py" not in code
+    assert "junit_gate.py" not in code
+    assert "--bootstrap" not in code
+    assert 'python3 "$script"' not in code
 
 
 @pytest.mark.parametrize("name", workflows() or ["<none>"])
