@@ -357,10 +357,8 @@ function agentCard(a, titles, workers, generated) {
   subs.forEach(function (s) {
     var icon = s.status === "start" ? (liveSubstep(a, s, subs, generated) ? LIVE_ICONS.start : "–") : (LIVE_ICONS[s.status] || "");
     var r = stepRef(a, s);
-    var li = lel("li", icon + " " + S(s.substep) + (r.issue > 0 ? " " + laneLabel(r.repo, r.issue) : ""), "",
-      { "data-substep": S(s.substep), "data-status": S(s.status) });
-    if (S(s.detail)) li.appendChild(el("div", S(s.detail), "live-detail muted"));
-    ul.appendChild(li);
+    ul.appendChild(lel("li", icon + " " + S(s.substep) + (r.issue > 0 ? " " + laneLabel(r.repo, r.issue) : ""), "",
+      { "data-substep": S(s.substep), "data-status": S(s.status) }));
   });
   card.appendChild(ul);
   workers.forEach(function (w) { card.appendChild(workerCard(w)); });
@@ -391,12 +389,13 @@ var LANE_MARK = { done: "✓", active: "●", failed: "✗", waiting: "⏸", pen
 var ROLE_STATION = { researcher: "plan", planner: "plan", "exam-writer": "exam", implementer: "build", reviewer: "check" };
 var foldOpen = Object.create(null);   // collapsible section -> open, kept across polls
 
-function crewRef(title) {   // "#12" is the host's issue; "factory#1" names a repository present in the snapshot
+function crewRef(title, d) {   // "#12" is the host's issue; "factory#1" names a repository present in the snapshot
   var m = /([\w.-]+)?#(\d+)/.exec(S(title));
   if (!m) return null;
   var issue = Number(m[2]), short = (m[1] || "").toLowerCase();
-  var repos = Object.keys((snap && snap.repos) || {});
+  var repos = Object.keys((snap && snap.repos) || {}).concat(arr(d && d.issues).map(function (i) { return S(i.repo); }));
   for (var j = 0; j < repos.length; j++) {
+    if (!repos[j]) continue;
     if (short && shortRepo(repos[j]).toLowerCase() === short) return { repo: repos[j], issue: issue };
   }
   return { repo: "", issue: issue };   // no prefix, or "PR#547": not a repository name, so the host's issue
@@ -461,7 +460,7 @@ function laneData(d) {
     });
   });
   crewNodes(arr(d.crew).slice(0, 1)).forEach(function (n) {   // the current pass only: older passes' agents confuse the lane
-    var r = crewRef(n.title), k = r ? laneKey(r.repo, r.issue) : "";
+    var r = crewRef(n.title, d), k = r ? laneKey(r.repo, r.issue) : "";
     if (r && lanes[k]) lanes[k].crew.push(n);
   });
   return Object.keys(lanes).map(function (k) {
@@ -593,6 +592,9 @@ function renderLanes(d, rerender) {
         S(l.now.s.station), l.now.open ? dur(l.now.s.started) : ago(l.now.s.at)]), "muted"));
       lane.appendChild(nowLine);
     }
+    l.steps.filter(function (x) { return S(x.s.detail); })
+      .sort(function (a, b) { return S(a.s.started) < S(b.s.started) ? -1 : 1; })
+      .forEach(function (x) { lane.appendChild(el("div", S(x.s.detail), "lane-step-detail muted")); });
     l.crew.filter(function (n) { return n.state === "busy" || n.state === "thinking"; })
       .forEach(function (n) { lane.appendChild(agentLine(n)); });
     if (laneOpen[l.key]) lane.appendChild(laneDetail(l, laneOpen[l.key]));
@@ -701,11 +703,11 @@ function inView(d) {   // live.json narrowed to the selected repository (the run
     view.agents.push(copy);
   });
   view.log = arr(d.log).filter(function (e) { return !(Number(e.issue) > 0) || canonRepo(S(e.repo)) === selRepo; });
-  view.crew = arr(d.crew).map(function prune(n) {
+  view.crew = arr(d.crew).map(function prune(n) {   // d: the full live data
     var c = {};
     Object.keys(n).forEach(function (k) { c[k] = n[k]; });
     c.children = arr(n.children).filter(function (k) {
-      var r = crewRef(k.title);
+      var r = crewRef(k.title, d);
       return !r || canonRepo(r.repo) === selRepo;
     }).map(prune);
     return c;
