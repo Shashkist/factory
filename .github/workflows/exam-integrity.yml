@@ -2,7 +2,9 @@
 # tests) together with the code or CI that judges it.
 #
 # The exam is the caller's top-level `tests/` (except `tests/unit`) until #65
-# adds exam-path inputs.
+# adds exam-path inputs. Until then the CI surface is also fixed: only the
+# Factory's own `src/factory_tools/ci/` and `.github/workflows/ci.yml` count as
+# CI, so a caller's own workflow files are not protected by this check yet.
 #
 # Caller (pull_request workflows only):
 #   jobs:

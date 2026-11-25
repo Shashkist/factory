@@ -9,6 +9,12 @@
 #       with:
 #         test-command: uv run pytest tests/acceptance -q --junitxml=acceptance.xml
 #
+# The exam job sets PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 by default, so a code
+# commit cannot register a pytest plugin that rewrites results. A caller whose
+# exam needs an installed plugin (pytest-asyncio, pytest-xdist, ...) either
+# loads it explicitly (`pytest -p <plugin>`) or passes
+# `disable-pytest-plugin-autoload: false` and accepts that risk.
+#
 # The judge is checked out from the Factory at the pinned commit of this
 # workflow, never from the caller's tree.
 name: JUnit gate
@@ -30,6 +36,11 @@ on:
         type: number
         required: false
         default: 10
+      disable-pytest-plugin-autoload:
+        description: Set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 in the exam job, so a code commit cannot register a pytest plugin that rewrites results.
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: read
@@ -42,7 +53,7 @@ jobs:
       artifact-name: ${{ steps.name.outputs.value }}
     env:
       # A code commit could register a pytest plugin (a pytest11 entry point).
-      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: ${{ inputs.disable-pytest-plugin-autoload && '1' || '' }}
     steps:
       - name: Check out the caller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,7 +77,9 @@ jobs:
 
   gate:
     needs: exam
-    if: ${{ !cancelled() }}
+    # always(): a run cancelled while the exam runs must not skip the gate,
+    # because a skipped required check counts as passed.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
