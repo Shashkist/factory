@@ -2,7 +2,7 @@
 
 The Factory publishes three reusable GitHub Actions workflows. A client repository calls them from its own workflows to get the same checks the Factory runs on itself:
 
-- `exam-integrity.yml`: no commit of a pull request may change the exam together with the code or CI that judges it.
+- `exam-integrity.yml`: the exam comes first; no commit of a pull request may change the exam together with the code, and no pull request may change the exam and the CI that judges it.
 - `junit-gate.yml`: runs the exam and fails on a missing, empty, skipped, failed or errored report.
 - `incident.yml`: opens or updates an "Incident: <workflow> failed" issue when a workflow goes red.
 
@@ -18,7 +18,7 @@ Never use a branch or a tag as the ref. To move to a newer release, change the S
 
 Why: a pull request must never run its own judge ([D25](factory/DECISIONS.md)). The pin stops the PR's own copy of the judge from running: the workflows check out their tools at the pinned commit, never from the caller's tree.
 
-The pin does not protect itself. It lives in the caller's workflow file, which a PR can edit: repoint the SHA, add `if: false`, rename the job. The guard is the merge gate. It requires the exam gate check to succeed ([D28](factory/DECISIONS.md)) and, from issue #80, binds that check to the pinned reusable workflow at a commit of this repository's `main`.
+The pin does not protect itself. It lives in the caller's workflow file, which a PR can edit: repoint the SHA, add `if: false`, rename the job. The guard is the merge gate. At `v0.1.0` it requires the exam gate check (`acceptance / gate`, [D28](factory/DECISIONS.md)) and the exam integrity check to succeed, but it matches both by name only: a PR that edits its own workflow file can still stand in a lookalike job of the same name, or a commit status with that name, and pass. Issue #80 (open, not in `v0.1.0`) binds both checks to the pinned reusable workflow at a commit of this repository's `main`. Until a release has it, review every pull request that changes a workflow file by hand.
 
 This guide and the examples below document release `v0.1.0`, commit `95753bb72e9c5d885376311efea91db7272f9d16`. The workflow files at that tag are the same as on `main` at the time of writing.
 
@@ -42,7 +42,7 @@ It fails when:
 
 What counts as what:
 
-- Exam, by default: every file under the top-level `tests/` except `tests/unit/`. `conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini` and `setup.cfg` anywhere outside `tests/unit` always count as exam, also when `exam-paths` is set.
+- Exam, by default: every file under the top-level `tests/` except `tests/unit/`. `conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini` and `setup.cfg` always count as exam, also when `exam-paths` is set, except inside the top-level `tests/unit/` (by default) or inside any `tests/unit/` directory (when `exam-paths` is set).
 - Code: every path that is not exam. By default the top-level `tests/` is never code. With `exam-paths` set, that exemption goes: a file under `tests/` that the globs do not match is code.
 - CI surface, by default: `src/factory_tools/ci/` and `.github/workflows/ci.yml` (the Factory's own layout). `ci-paths` replaces it.
 
