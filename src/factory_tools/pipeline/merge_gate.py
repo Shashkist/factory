@@ -112,8 +112,9 @@ class _Reads:
     def ci_jobs(self) -> dict[str, Any] | None:
         """The jobs of the head's ci.yml (raw form), or None when unreadable or a key repeats.
 
-        The first read also records the file's own HOLD reasons (D29 amendment 1): a job
-        `name:` with an expression, or a shown name with ` / `, cannot be tied to a check name.
+        The first read also records the file's own HOLD reasons (D29 amendments 1 and 2): a
+        job `name:` with an expression, a shown name with ` / `, or a shown name whose white
+        space is not single and inner only, cannot be tied to a check name.
         """
         text = self._api("-H", RAW, f"repos/{{owner}}/{{repo}}/contents/{CI_FILE}?ref={self.head}")
         if text is None:
@@ -138,6 +139,12 @@ class _Reads:
                     self.file_reasons.append(
                         f"{CI_FILE}: job {j!r} is shown as {_shown(j, job)!r},"
                         " a name with ' / ' that a called workflow's checks also take"
+                    )
+                elif _shown(j, job) != " ".join(_shown(j, job).split()):
+                    self.file_reasons.append(
+                        f"{CI_FILE}: job {j!r} is shown as {_shown(j, job)!r},"
+                        " a name with leading, trailing or repeated white space that"
+                        " GitHub may show as another job's name"
                     )
         return jobs
 

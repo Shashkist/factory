@@ -190,6 +190,10 @@ def test_non_string_uses_holds_with_a_reason(value):
         ("  g:\n    name: \"${{ 'acceptance / gate' }}\"\n", "named by an expression"),
         ("  g:\n    name: x / y\n    uses: ./.github/workflows/l.yml\n", "shown as 'x / y'"),
         ("  x / y:\n    uses: ./.github/workflows/l.yml\n", "shown as 'x / y'"),
+        # D29 amendment 2 (review round 2 of #84): GitHub may trim the shown name.
+        ("  g:\n    name: \" acceptance\"\n    uses: ./.github/workflows/l.yml\n", "white space"),
+        ("  g:\n    name: \"acceptance \"\n    uses: ./.github/workflows/l.yml\n", "white space"),
+        ("  g:\n    name: \"accept  ance\"\n", "white space"),
     ],
 )
 def test_expression_or_slashed_job_names_hold_once_for_the_file(job, words):
