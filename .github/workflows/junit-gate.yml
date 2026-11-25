@@ -10,7 +10,8 @@
 #         test-command: uv run pytest tests/acceptance -q --junitxml=acceptance.xml
 #
 # The exam job sets PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 by default, so a code
-# commit cannot register a pytest plugin that rewrites results. A caller whose
+# commit cannot auto-register an installed pytest plugin that rewrites results
+# (an explicit `-p` in the caller's pytest config still loads one). A caller whose
 # exam needs an installed plugin (pytest-asyncio, pytest-xdist, ...) either
 # loads it explicitly (`pytest -p <plugin>`) or passes
 # `disable-pytest-plugin-autoload: false` and accepts that risk.
@@ -52,7 +53,7 @@ jobs:
     outputs:
       artifact-name: ${{ steps.name.outputs.value }}
     env:
-      # A code commit could register a pytest plugin (a pytest11 entry point).
+      # A code commit could auto-register an installed pytest plugin (a pytest11 entry point).
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: ${{ inputs.disable-pytest-plugin-autoload && '1' || '' }}
     steps:
       - name: Check out the caller
@@ -93,7 +94,9 @@ jobs:
       - name: Download the report
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ needs.exam.outputs.artifact-name }}
+          # A fixed fallback name: an empty name would download every artifact
+          # of the caller's run, so another call's report could be judged.
+          name: ${{ needs.exam.outputs.artifact-name || 'no-exam-report' }}
           path: report
       - name: Require the report
         env:
