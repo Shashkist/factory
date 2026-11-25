@@ -76,7 +76,7 @@ def test_a_real_run_prunes_the_worktree_whose_folder_is_gone(w: World) -> None:
     w.pr("f/103-gone", "MERGED")
     shutil.rmtree(gone)
     ok(w.run())
-    assert "wt-103" not in os.listdir(w.repo / ".git" / "worktrees")
+    assert not (w.repo / ".git" / "worktrees" / "wt-103").exists()  # git may drop the empty parent
     assert "f/103-gone" not in w.branches()
 
 
