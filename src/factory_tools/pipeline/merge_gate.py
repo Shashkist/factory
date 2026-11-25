@@ -22,7 +22,7 @@ EXAM_GATE = "acceptance / gate"
 WORKFLOWS_REPO = "Shashkist/factory"
 CI_FILE = ".github/workflows/ci.yml"
 RAW = "Accept: application/vnd.github.raw+json"
-JOB_URL = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/actions/runs/(\d+)/job/\d+/?$")
+JOB_URL = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/actions/runs/(\d+)/job/(\d+)/?$")
 VERDICT = re.compile(r"^Review round (\d+): (APPROVE|CHANGES) at ([0-9a-fA-F]{7,40})\s*$")
 CLOSES = re.compile(r"^\s*closes\s+#(\d+)\s*$", re.IGNORECASE | re.MULTILINE)
 
@@ -92,15 +92,23 @@ class _Reads:
         return self.cache[key]
 
     def run_of(self, url_repo: str, run_id: str) -> dict[str, Any] | None:
-        """The run, read in the PR's repository.
+        """The run, read in the PR's repository."""
+        return self._actions("runs", url_repo, run_id)
 
-        Without `--repo` the PR's repository has no name here, so the run is also read under the
-        repository its URL names: run ids are unique across GitHub, so both reads succeed only
-        when the URL names the PR's repository.
+    def job_of(self, url_repo: str, job_id: str) -> dict[str, Any] | None:
+        """The Actions job, read in the PR's repository (D29 amendment 3)."""
+        return self._actions("jobs", url_repo, job_id)
+
+    def _actions(self, kind: str, url_repo: str, item_id: str) -> dict[str, Any] | None:
+        """A run or job object, each read once.
+
+        Without `--repo` the PR's repository has no name here, so it is also read under the
+        repository the URL names: run and job ids are unique across GitHub, so both reads
+        succeed only when the URL names the PR's repository.
         """
-        texts = [self._api(f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}")]
+        texts = [self._api(f"repos/{{owner}}/{{repo}}/actions/{kind}/{item_id}")]
         if not self.repo:
-            texts.append(self._api(f"repos/{url_repo}/actions/runs/{run_id}"))
+            texts.append(self._api(f"repos/{url_repo}/actions/{kind}/{item_id}"))
         if any(t is None for t in texts):
             return None
         try:
@@ -174,7 +182,7 @@ def _binding_reason(check: dict[str, Any], workflow: str, reads: _Reads) -> str 
     m = JOB_URL.match(check.get("detailsUrl") or "")
     if not m:
         return f"{name}: details URL is not a job of a workflow run"
-    url_repo, run_id = m.group(1), m.group(2)
+    url_repo, run_id, job_id = m.group(1), m.group(2), m.group(3)
     if reads.repo and url_repo.lower() != reads.repo.lower():
         return f"{name}: details URL is a run of {url_repo}, not of {reads.repo}"
     run = reads.run_of(url_repo, run_id)
@@ -209,6 +217,25 @@ def _binding_reason(check: dict[str, Any], workflow: str, reads: _Reads) -> str 
         return f"{name}: job {caller!r} has a `uses:` that is not a string"
     if uses not in pinned:
         return f"{name}: job {caller!r} does not use a {workflow} on main that run {run_id} called"
+    return job_reason(name, run_id, job_id, reads.job_of(url_repo, job_id), reads.head)
+
+
+def job_reason(
+    name: str, run_id: str, job_id: str, job: dict[str, Any] | None, head: str
+) -> str | None:
+    """Why the details URL's job is not the check run's own Actions job (D29 amendment 3)."""
+    if job is None:
+        return f"{name}: job {job_id} is not a readable Actions job of this repository"
+    if not isinstance(job.get("run_id"), int) or not isinstance(job.get("name"), str):
+        return f"{name}: job {job_id} has no run id or name"
+    if not isinstance(job.get("head_sha"), str):
+        return f"{name}: job {job_id} has no head sha"
+    if str(job["run_id"]) != run_id:
+        return f"{name}: job {job_id} belongs to run {job['run_id']}, not run {run_id}"
+    if job["head_sha"].lower() != head:
+        return f"{name}: job {job_id} is not for head {head[:7]}"
+    if job["name"] != name:
+        return f"{name}: job {job_id} is named {job['name']!r}, not the check name"
     return None
 
 
