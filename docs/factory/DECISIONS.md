@@ -347,3 +347,9 @@ in force · factory · 2026-11-25 · revertible
 **Why.** #63 criteria 1 and 2; an exam that calls the network would be flaky and could not run in a cloud session.
 **Alternatives.** Tag the merge commit of the docs PR (the docs could not name its SHA before it exists); a release workflow that tags (more surface than one tag needs).
 **Revert.** `git push origin :refs/tags/v0.1.0` and re-tag; the document's pins follow the tag.
+
+## D31 · #67: the exam for criteria 1 to 6 closes #67; criteria 7 to 9 move to #91
+**Decision.** PR #90 is the exam for #67's original criteria 1 to 6 (exam-only; the hardening shipped in #66). Criteria 7 to 9, which the owner added in a comment on #67 after the verification of #66, move to #91: criterion 8 needs a code change (the gate exits 1 when `job.workflow_repository` or `job.workflow_sha` is empty), so it needs its own exam-first, then-code sequence (D23), and criterion 9 is a docs change. #67 closes when #90 merges, with a link to #91.
+**Why.** One issue, one exam-only PR stays small and reviewable; mixing a code change into it would break the exam-first order. The review of #90 round 1 found the split was missing, not wrong.
+**Alternatives.** Keep #67 open across two PRs (an issue that stays half-done between passes); put the code for criterion 8 into #90 (an exam and the code it tests in one PR).
+**Revert.** Close #91 and reopen #67 with criteria 7 to 9.
