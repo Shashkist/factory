@@ -78,6 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=merge_gate.EXAM_GATE,
         help="the exam gate check, which must conclude SUCCESS (default: %(default)s)",
     )
+    mg.add_argument(
+        "--workflows-repo",
+        default=merge_gate.WORKFLOWS_REPO,
+        help="owner/name whose pinned junit-gate.yml and exam-integrity.yml must back the "
+        "exam checks (default: %(default)s)",
+    )
     mg.set_defaults(func=merge_gate.run_command)
     return parser
 
