@@ -185,3 +185,23 @@ It holds unless: every check passed and `exam-integrity` succeeded; the latest `
 ```
 factory-tools merge-gate 9 --repo owner/name --session lf-a1b2
 ```
+
+## `factory-tools worktrees`
+
+The local worktrees and branches of finished work.
+
+```
+factory-tools worktrees prune
+```
+
+### `factory-tools worktrees prune`
+
+Remove the worktrees, and their local branches, whose work is finished: the PR merged and nothing was committed after the merge, or the PR closed and the branch tip is on the server; a subagent worktree (`.claude/worktrees/agent-*`) idle longer than 90 minutes and older than this pass whose tip is on a remote branch; empty leftover folders under `.claude/worktrees/`. A worktree that holds another worktree or any `.git` file or folder below its top level is kept, with the nested path named. Anything with tracked changes, a live claim, an open PR, no PR, a lock, or an unreadable `git status` is kept. Untracked and ignored top-level names are printed before a worktree is removed. The main worktree and the one the command runs from are never touched. A folder the OS reports busy is skipped, never forced. `gh` is only read.
+
+One line per worktree or folder: `<STATUS> <path> <reason>`, STATUS `REMOVED`, `KEPT` or `SKIPPED`. Exit 0 whenever the command could do its job. Run it from the clone of the repository named by `--repo`: when `origin` is a GitHub URL naming another repository it exits 2 with both names and removes nothing, also under `--dry-run`. A local-path `origin` is accepted.
+
+Options: `--dry-run` (print the same lines, change nothing), `--issue` (only the worktree of `f/<n>-...`, no leftover sweep), `--pass-start` (ISO 8601 start of this pass; subagent worktrees are kept without it), `--repo` (owner/name `gh` is aimed at).
+
+```
+factory-tools worktrees prune --pass-start 2026-11-25T08:00:00Z --repo owner/name --dry-run
+```

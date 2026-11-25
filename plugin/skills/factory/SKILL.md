@@ -37,7 +37,10 @@ gh pr list -R <repo> --state open
 gh run list -R <repo> --limit 8
 factory-tools status --repo <repo>
 factory-tools stale --repo <repo>
+factory-tools worktrees prune --pass-start <ISO 8601 start of this pass> --repo <repo>
 ```
+
+The `worktrees prune` line runs once per pass, without `--issue`, from each repository's own clone (it refuses a `--repo` that is not the clone's `origin`): it removes the worktrees and local branches of merged or closed work and empty leftover folders, and keeps anything with changes, a live claim or an open PR (add `--dry-run` to only look).
 
 The pass works over **every repository in the repositories list** (the list the project keeps beside its state file): run the `gh` and `factory-tools ... --repo <repo>` calls for each one. `factory-tools status` without `--repo` already shows every repository.
 
@@ -111,7 +114,10 @@ gh issue comment <n> -R <repo> --body "Shipped in #<pr>. Run: <url>. Verified: <
 gh issue close <n> -R <repo> --reason completed   # no-op if the merge closed it
 gh issue edit <n> -R <repo> --add-label done --remove-label in-review
 factory-tools release <n> --repo <repo> --session <you> --reason shipped
+factory-tools worktrees prune --issue <n> --repo <repo>
 ```
+
+Prune after the release, run from the clone of the repository the issue belongs to (its own clone, not another repository's): a live claim keeps the worktree. If the prune reports `KEPT ... tracked changes`, say so in the closing comment on the issue (those files are saved nowhere else).
 
 (Use the project's own label names: the "Labels" list under "This project" maps the Factory's names to them.) Update the state file (in flight to recently done, next) and append a short history entry if something was learned. Commit straight to the default branch.
 

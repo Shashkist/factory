@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from factory_tools import claims, methodology, profile, progress
+from factory_tools import claims, methodology, profile, progress, worktrees
 from factory_tools.pipeline import incident_gate, merge_gate, paths
 
 
@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("path", nargs="?", default=profile.DEFAULT_PATH)
     check.set_defaults(func=_profile_check)
     claims.add_commands(groups)
+    worktrees.add_commands(groups)
 
     meth = groups.add_parser("methodology", help="the methodology plugin")
     meth_cmds = meth.add_subparsers(dest="command", required=True)

@@ -63,11 +63,18 @@ OPEN_LABEL = "status:ready"
 DEFAULT_STALE_AFTER = timedelta(minutes=90)
 
 
+GH_TIMEOUT = 60  # seconds: a gh call that hangs must not stop a whole pass
+
+
 def _run(args: list[str]) -> str:
     """Run `gh` and return stdout. Injected in tests; never mocked in src."""
-    proc = subprocess.run(
-        ["gh", *args], capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
+    try:
+        proc = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=GH_TIMEOUT, check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError("gh " + " ".join(args) + " timed out") from e
     if proc.returncode != 0:
         raise RuntimeError("gh " + " ".join(args) + " failed: " + proc.stderr.strip())
     return proc.stdout
