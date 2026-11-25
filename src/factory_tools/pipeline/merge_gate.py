@@ -226,8 +226,10 @@ def job_reason(
     """Why the details URL's job is not the check run's own Actions job (D29 amendment 3)."""
     if job is None:
         return f"{name}: job {job_id} is not a readable Actions job of this repository"
-    if not isinstance(job.get("run_id"), int) or not isinstance(job.get("name"), str):
-        return f"{name}: job {job_id} has no run id or name"
+    if not isinstance(job.get("run_id"), int):
+        return f"{name}: job {job_id} has no run_id"
+    if not isinstance(job.get("name"), str):
+        return f"{name}: job {job_id} has no name"
     if not isinstance(job.get("head_sha"), str):
         return f"{name}: job {job_id} has no head sha"
     if str(job["run_id"]) != run_id:
@@ -236,6 +238,11 @@ def job_reason(
         return f"{name}: job {job_id} is not for head {head[:7]}"
     if job["name"] != name:
         return f"{name}: job {job_id} is named {job['name']!r}, not the check name"
+    if job.get("status") != "completed" or job.get("conclusion") != "success":
+        return (
+            f"{name}: job {job_id} is {job.get('status')}/{job.get('conclusion')},"
+            " not completed with success"
+        )
     return None
 
 

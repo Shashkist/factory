@@ -337,6 +337,7 @@ in force · factory · 2026-11-25 · revertible
 **Revert of amendment 2.** Drop the white-space hold; (b) to (d) are scope notes and end when #85 and #86 close.
 
 **Amendment 3 (#86, closes 2(b) and 2(d)).** Point 2 also holds unless the Actions job named by the details URL (`gh api repos/<repo>/actions/jobs/<job id>`, read once per job id, cached like the run reads; without `--repo` under both the placeholder and the URL's repository) has an integer `run_id` equal to the URL's run, a `head_sha` equal to the PR head and a `name` equal to the check name. An unreadable job (404, error, missing or mistyped fields) holds. The job is checked after points 2 to 4, so the HOLD line still names the first failed condition in the order of amendment 1. This stops a check run created through the Checks API whose details URL points into a real run of the pinned caller. Criterion 5 of #86: whether GitHub overrides a caller-supplied `details_url` for check runs created with `GITHUB_TOKEN` is not confirmed; the job read stays as defence in depth either way.
+Review round 1 of PR #88 added: the job must also have `status` `completed` and `conclusion` `success`, otherwise a forged SUCCESS check pointing at the real but failed (or skipped, or unfinished) job would pass. A missing `run_id` and a missing `name` are separate HOLD lines.
 **Revert of amendment 3.** Drop `job_reason` and its call from `merge_gate.py`.
 
 ## D30 · #63: `v0.1.0` is today's green `main` (95753bb), and its existence is checked at close, not in the exam

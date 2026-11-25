@@ -132,7 +132,7 @@ def reads(repo: str | None = "o/r", run: dict | None = None, ci: str = CI, statu
         if "/actions/runs/" in path:
             return json.dumps(run or RUN)
         if "/actions/jobs/" in path:
-            return json.dumps({"run_id": 7, "head_sha": HEAD, "name": "acceptance / gate"})
+            return json.dumps(_job())
         if "/contents/" in path:
             return ci
         if "/compare/main..." in path:
@@ -267,7 +267,13 @@ def test_only_successful_protected_checks_are_bound():
 
 
 def _job(**over):
-    job = {"run_id": 7, "head_sha": HEAD, "name": "acceptance / gate"}
+    job = {
+        "run_id": 7,
+        "head_sha": HEAD,
+        "name": "acceptance / gate",
+        "status": "completed",
+        "conclusion": "success",
+    }
     job.update(over)
     return job
 
@@ -281,9 +287,13 @@ def test_job_reason_genuine_job_passes():
     [
         (None, "not a readable"),
         (_job(run_id=8), "belongs to run 8"),
-        (_job(run_id="7"), "no run id"),
-        (_job(run_id=None), "no run id"),
-        (_job(name=None), "no run id"),
+        (_job(run_id="7"), "no run_id"),
+        (_job(run_id=None), "no run_id"),
+        (_job(name=None), "has no name"),
+        (_job(conclusion="failure"), "not completed with success"),
+        (_job(conclusion=None), "not completed with success"),
+        (_job(status="in_progress"), "not completed with success"),
+        (_job(status=None), "not completed with success"),
         (_job(head_sha=None), "no head sha"),
         (_job(head_sha="b" * 40), "not for head"),
         (_job(name="gate"), "not the check name"),
