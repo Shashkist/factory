@@ -16,19 +16,37 @@ uses: Shashkist/factory/.github/workflows/junit-gate.yml@95753bb72e9c5d885376311
 
 Never use a branch or a tag as the ref. To move to a newer release, change the SHA and the comment in a pull request.
 
-Why: a pull request must never run its own judge (D25). With a full SHA, a PR runs the judge as it was on `main` when the pin was set, so a PR cannot weaken the check it is judged by. The workflows also check out their tools at that same pinned commit, never from the caller's tree.
+Why: a pull request must never run its own judge ([D25](factory/DECISIONS.md)). The pin stops the PR's own copy of the judge from running: the workflows check out their tools at the pinned commit, never from the caller's tree.
+
+The pin does not protect itself. It lives in the caller's workflow file, which a PR can edit: repoint the SHA, add `if: false`, rename the job. The guard is the merge gate. It requires the exam gate check to succeed ([D28](factory/DECISIONS.md)) and, from issue #80, binds that check to the pinned reusable workflow at a commit of this repository's `main`.
 
 This guide and the examples below document release `v0.1.0`, commit `95753bb72e9c5d885376311efea91db7272f9d16`. The workflow files at that tag are the same as on `main` at the time of writing.
 
 ## Check names
 
-A called workflow shows up in the caller as `<caller job> / <called job>`. The merge gate reads these names (D25, D28), so name the caller job and keep it stable. The names are given in each section.
+A called workflow shows up in the caller as `<caller job> / <called job>`. The merge gate reads these names ([D25](factory/DECISIONS.md), [D28](factory/DECISIONS.md)), so name the caller job and keep it stable. The names are given in each section. A caller job skipped by its own `if:` shows as the bare caller job name (for example `exam-integrity`, skipped on push), not `<caller> / <called>`.
+
+The merge gate's default exam gate is `acceptance / gate`. `factory-tools merge-gate --exam-gate "<job> / gate"` names another.
 
 ## `exam-integrity.yml`
 
-**What it does.** For every commit of a pull request, it checks that the commit does not change exam files together with code or the CI surface. The judge is checked out from the Factory at the pinned commit. It fails when a commit mixes exam and code, and when it is not run on a `pull_request` event (no head SHA or base ref), or when `origin/<base>` is missing from the checkout.
+**What it does.** It checks the commits of a pull request (`origin/<base>..<head>`) against one rule: the exam is written first and never changes together with the code or the CI that judges it. The judge is checked out from the Factory at the pinned commit.
 
-By default the exam is the caller's top-level `tests/` except `tests/unit`, and the CI surface is the Factory's own `src/factory_tools/ci/` and `.github/workflows/ci.yml`. A client with another layout sets `exam-paths` and `ci-paths`.
+It fails when:
+
+- the range contains a merge commit (rebase onto the base branch);
+- one commit changes the exam and code together;
+- the exam changes in a commit after the first commit that changed code (exam first);
+- the PR as a whole changes the exam and the CI surface. This is judged over all changed files of the PR, not per commit: a PR with one exam-only commit and one `ci.yml`-only commit fails;
+- it is not run on a `pull_request` event (no head SHA or base ref), or `origin/<base>` is missing from the checkout.
+
+What counts as what:
+
+- Exam, by default: every file under the top-level `tests/` except `tests/unit/`. `conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini` and `setup.cfg` anywhere outside `tests/unit` always count as exam, also when `exam-paths` is set.
+- Code: every path that is not exam. By default the top-level `tests/` is never code. With `exam-paths` set, that exemption goes: a file under `tests/` that the globs do not match is code.
+- CI surface, by default: `src/factory_tools/ci/` and `.github/workflows/ci.yml` (the Factory's own layout). `ci-paths` replaces it.
+
+A client with another layout sets `exam-paths` and `ci-paths`.
 
 **Inputs**
 
