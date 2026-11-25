@@ -66,3 +66,18 @@ def test_commit_files_merges_concatenated_pages_and_gate_holds_on_page_two():
     pr = {"commits": [{"oid": "abcdef0123"}]}
     reasons = merge_gate._commit_reasons(pr, run, "o/r")
     assert len(reasons) == 1 and "tests/acceptance" in reasons[0]
+
+
+@pytest.mark.parametrize("name", ["exam-integrity", "exam-integrity / exam-integrity"])
+def test_exam_integrity_names_count(name):
+    assert merge_gate._check_reasons([{"name": name, "conclusion": "SUCCESS"}]) == []
+    skipped = [{"name": name, "conclusion": "SKIPPED"}]
+    assert merge_gate._check_reasons(skipped) == [f"{name} ended in skipped"]
+
+
+@pytest.mark.parametrize(
+    "name", ["exam-integrity-lint", "exam-integrity / other", "x / exam-integrity-2"]
+)
+def test_exam_integrity_lookalikes_do_not_count(name):
+    reasons = merge_gate._check_reasons([{"name": name, "conclusion": "SUCCESS"}])
+    assert reasons == ["exam-integrity has not run"]
