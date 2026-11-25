@@ -399,10 +399,11 @@ function crewRef(title, d) {   // "#12" is the host's issue; "factory#1" names a
     if (!repos[j]) continue;
     if (short && shortRepo(repos[j]).toLowerCase() === short) return { repo: repos[j], issue: issue };
   }
-  for (var k = 0; k < repos.length; k++) {   // else a repository short name standing as a whole word ("Review of factory PR #53")
-    if (!repos[k]) continue;
-    var name = shortRepo(repos[k]).replace(/[^\w]/g, "\\$&");
-    if (new RegExp("(^|[^\\w])" + name + "($|[^\\w])", "i").test(S(title))) return { repo: repos[k], issue: issue };
+  for (var k = 0; k < repos.length; k++) {   // else the short name right before the reference: "factory #53", "Factory PR #53", "factory issue #53"
+    var nm = shortRepo(repos[k] || "").replace(/[^\w]/g, "\\$&");
+    if (!nm) continue;
+    var at = new RegExp("(^|[^\\w-])" + nm + "(\\s+(?:PR|issue))?\\s*#(\\d+)", "i").exec(S(title));
+    if (at && Number(at[3]) === issue) return { repo: repos[k], issue: issue };
   }
   return { repo: "", issue: issue };   // no prefix, or "PR#547": not a repository name, so the host's issue
 }
