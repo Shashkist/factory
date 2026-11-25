@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -301,3 +303,123 @@ def test_a_worktree_agent_branch_outside_the_subagent_folder_is_kept(w: World) -
     out = ok(w.run("--pass-start", iso(3600)))
     assert wt.exists() and "worktree-agent-elsewhere" in w.branches()
     assert not w.line(out, "wt-agent-elsewhere").startswith("REMOVED"), out
+
+# ---- links and bare repositories inside a finished worktree ----------------------------------
+
+
+def make_dir_link(link: Path, target: Path) -> None:
+    """A directory junction on Windows, a directory symlink elsewhere; skip if neither works."""
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if sys.platform == "win32":
+            r = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                pytest.skip("cannot create a junction: " + r.stderr + r.stdout)
+        else:
+            os.symlink(target, link, target_is_directory=True)
+    except OSError as e:
+        pytest.skip(f"cannot create a directory link: {e}")
+
+
+def drop_link(link: Path) -> None:
+    """Remove a link without touching its target (test cleanup)."""
+    try:
+        os.rmdir(link) if sys.platform == "win32" else os.unlink(link)
+    except OSError:
+        pass
+
+
+def outside_folder(w: World) -> Path:
+    outside = w.tmp / "outside-data"
+    outside.mkdir()
+    (outside / "precious.txt").write_text("not part of any worktree\n")
+    (outside / "deep").mkdir()
+    (outside / "deep" / "more.txt").write_text("also precious\n")
+    return outside
+
+
+@pytest.mark.parametrize("flags", [[], ["--dry-run"], ["--issue", "150"]])
+def test_a_finished_worktree_with_a_link_to_an_outside_folder_is_kept(
+    w: World, flags: list[str]
+) -> None:
+    wt = w.worktree("f/150-link", "wt-150")
+    w.pr("f/150-link", "MERGED")
+    outside = outside_folder(w)
+    link = wt / "node_modules" / "pkg"
+    make_dir_link(link, outside)
+    try:
+        out = ok(w.run(*flags))
+        line = w.line(out, "wt-150")
+        assert line.startswith("KEPT"), out
+        assert "node_modules/pkg" in norm(line), f"the reason must name the link path: {line}"
+        assert wt.exists() and "f/150-link" in w.branches()
+        assert (outside / "precious.txt").read_text() == "not part of any worktree\n"
+        assert (outside / "deep" / "more.txt").read_text() == "also precious\n"
+    finally:
+        drop_link(link)
+
+
+@pytest.mark.parametrize("flags", [[], ["--dry-run"]])
+def test_a_link_pointing_back_into_its_own_worktree_is_kept_without_looping(
+    w: World, flags: list[str]
+) -> None:
+    wt = w.worktree("f/151-loop", "wt-151")
+    w.pr("f/151-loop", "MERGED")
+    other = w.worktree("f/152-fine", "wt-152")
+    w.pr("f/152-fine", "MERGED")
+    link = wt / "loop"
+    make_dir_link(link, wt)
+    started = time.time()
+    try:
+        r = w.run(*flags)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Traceback" not in r.stderr, r.stderr
+        assert time.time() - started < 60, "walking the self-link took far too long"
+        line = w.line(r.stdout, "wt-151")
+        assert line.startswith("KEPT") and "loop" in norm(line), r.stdout
+        assert wt.exists() and (wt / "work.txt").exists()
+        assert "f/151-loop" in w.branches()
+        if flags:
+            assert other.exists()
+        else:
+            assert not other.exists(), "one link stopped the sweep"
+    finally:
+        drop_link(link)
+
+
+def test_a_nested_bare_repository_is_kept(w: World) -> None:
+    wt = w.worktree("f/153-bare", "wt-153")
+    w.pr("f/153-bare", "MERGED")
+    bare = wt / "vendor" / "bare.git"
+    bare.parent.mkdir(parents=True)
+    git(wt, "init", "--bare", "-b", "main", str(bare))
+    git(w.repo, "push", str(bare), "main")  # it holds a commit that exists nowhere else
+    assert (bare / "HEAD").exists() and not (bare / ".git").exists()
+    out = ok(w.run())
+    line = w.line(out, "wt-153")
+    assert line.startswith("KEPT"), out
+    assert "vendor/bare.git" in norm(line), line
+    assert wt.exists() and (bare / "HEAD").exists() and (bare / "objects").exists()
+    assert "f/153-bare" in w.branches()
+
+
+# ---- --repo is checked before anything is pruned --------------------------------------------
+
+
+def test_a_refused_repo_mismatch_does_not_prune_a_worktree_whose_folder_is_gone(
+    w: World,
+) -> None:
+    gone = w.worktree("f/140-gone", "wt-140")
+    w.pr("f/140-gone", "MERGED")
+    shutil.rmtree(gone)
+    admin = w.repo / ".git" / "worktrees" / "wt-140"
+    assert admin.exists()
+    set_origin_url(w, "https://github.com/Somebody/else.git")
+    r = w.run()
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert admin.exists(), "the check must run before `git worktree prune`"
+    assert "f/140-gone" in w.branches()
+
