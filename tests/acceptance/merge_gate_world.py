@@ -8,6 +8,7 @@ so no PATH tricks are needed (same device as the claims exam). No live GitHub ca
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -39,6 +40,8 @@ RUN_ID = "45624202389"
 GATE_FILE = "junit-gate.yml"
 INTEGRITY_FILE = "exam-integrity.yml"
 CI_PATH = ".github/workflows/ci.yml"
+JOB_ERROR = {"__error__": "HTTP 500: server error"}
+JOB_PATH = re.compile(r"/actions/runs/(\d+)/job/(\d+)$")
 
 
 def uses(workflow: str, pin: str = PIN, wf_repo: str = WF_REPO) -> str:
@@ -229,6 +232,11 @@ class Gate:
         self.wf_repo = WF_REPO
         self.pr_repo = HERE
         self.exam_gate_name = EXAM_GATE
+        # #86: the jobs endpoint answers, for every check run whose details URL is a job of a
+        # run, a genuine job (name = the check name, run_id = the URL's run, head_sha = the PR
+        # head). `jobs` changes it per job id: a dict of fields to set (None removes a field),
+        # None for a 404, or JOB_ERROR for a server error.
+        self.jobs: dict[str, Any] = {}
 
     def auto_backing(
         self, rollup: list[dict[str, Any]]
@@ -275,6 +283,26 @@ class Gate:
             )
         return out, runs, ci_yml(*callers.values()) if callers else ci_yml()
 
+    def served_jobs(self, rollup: list[dict[str, Any]], head: str) -> dict[str, Any]:
+        """The jobs the fake serves: one genuine job per check run backed by a job URL."""
+        jobs: dict[str, Any] = {}
+        for c in rollup:
+            m = JOB_PATH.search(c.get("detailsUrl") or "")
+            if c.get("__typename") == "CheckRun" and m:
+                jobs.setdefault(m.group(2), {
+                    "id": int(m.group(2)), "run_id": int(m.group(1)), "head_sha": head,
+                    "name": c["name"], "status": "completed", "conclusion": "success",
+                })
+        for job_id, change in self.jobs.items():
+            if change is None:
+                jobs.pop(job_id, None)
+            elif "__error__" in change:
+                jobs[job_id] = change
+            else:
+                merged = {**jobs.get(job_id, {}), **change}
+                jobs[job_id] = {k: v for k, v in merged.items() if v is not None}
+        return jobs
+
     def write(self) -> None:
         pr = dict(self.pr)
         rollup = list(pr.get("statusCheckRollup") or [])
@@ -284,6 +312,7 @@ class Gate:
         if runs is None:
             rollup, runs, text = self.auto_backing(rollup)
         pr["statusCheckRollup"] = rollup
+        jobs = self.served_jobs(rollup, pr["headRefOid"])
         repo = {"prs": {"9": pr}, "commits": self.files, "issues": self.issues}
         repos = {HERE: repo, OTHER: repo}
         repos.setdefault(self.wf_repo, repo)
@@ -291,7 +320,8 @@ class Gate:
         contents = {k: {CI_PATH + "@" + pr["headRefOid"]: text or ci_yml()} for k in keys}
         self.state_path.write_text(
             json.dumps({"default": HERE, "calls": [], "writes": [], "repos": repos,
-                        "runs": {k: runs for k in keys}, "contents": contents,
+                        "runs": {k: runs for k in keys}, "jobs": {k: jobs for k in keys},
+                        "contents": contents,
                         "compare": {self.wf_repo.lower(): self.compare}}),
             encoding="utf-8",
         )
