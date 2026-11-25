@@ -300,3 +300,11 @@ in force · factory · 2026-11-25 · revertible
 **Why.** The rule is right: a PR must not move the exam and the CI that runs it at the same time. Splitting keeps every PR within it, and after C the exam is as strict as D25 says.
 **Alternatives.** Run with `--bootstrap` (not possible: the reusable judge has no bypass, and it would weaken the rule); keep the old strings in `ci.yml` comments so the old cases pass (games the exam); drop the three #1 cases in A (looser than accept-either for the window).
 **Revert.** Merge C's cases back into A's form, or restore 34f9188's `ci.yml` and #1 cases.
+
+## D27 · #65 ships as two PRs: the judge change first, then its exam unchanged
+in force · factory · 2026-11-25 · revertible
+
+**Finding.** #65 changes `src/factory_tools/ci/exam_integrity.py`, which D3 makes CI surface, and its exam (`tests/acceptance/test_issue_65_exam_path_inputs.py`, written first as ff7fa47 on `f/65-exam-path-inputs`, 10 cases red against main) cannot ride in the same PR: `exam_integrity origin/main HEAD` says `PR changes the exam together with the CI surface`. Unlike D9 the code cannot move out of `ci/`: the change is the judge itself. An exam-only PR first cannot merge either: its new cases are red until the judge changes, and the JUnit gate refuses skips.
+**Decision.** Keep the #1 rule as strict as it is. (A) PR `f/65-judge-globs`, `Part of #65`: the code commit only (judge options `--exam-paths`/`--ci-paths`, `exam-integrity.yml` inputs `exam-paths`/`ci-paths` through `env:`, docs, unit cases). The exam stays the one written first: the reviewer runs ff7fa47's exam file against A's head and the PR body shows the result. (B) PR `f/65-exam-path-inputs`, `Closes #65`: the exam commit ff7fa47 unchanged, rebased onto main after A. Exam-first holds in authorship (the exam was committed before the code and the code was built against it); only the merge order is code first.
+**Alternatives.** Narrow the CI surface to exclude `exam_integrity.py` (loosens the #1 rule); `--bootstrap` (the reusable judge has no bypass); mark the new cases xfail until A (the gate refuses skipped and xfail is a weaker exam).
+**Revert.** Revert A's squash commit; B is exam only.
