@@ -5,9 +5,12 @@ Prints `MERGE`, or one `HOLD: <reason>` line per reason. Exit 0 / 1. Read-only.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from typing import Any
+
+import yaml
 
 from factory_tools import claims
 from factory_tools.ci.exam_integrity import _is_code, _is_exam
@@ -16,6 +19,10 @@ MAX_REVIEW_ROUNDS = 2
 MAX_CI_ROUNDS = 5
 PASSED = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 EXAM_GATE = "acceptance / gate"
+WORKFLOWS_REPO = "Shashkist/factory"
+CI_FILE = ".github/workflows/ci.yml"
+RAW = "Accept: application/vnd.github.raw+json"
+JOB_URL = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/actions/runs/(\d+)/job/\d+/?$")
 VERDICT = re.compile(r"^Review round (\d+): (APPROVE|CHANGES) at ([0-9a-fA-F]{7,40})\s*$")
 CLOSES = re.compile(r"^\s*closes\s+#(\d+)\s*$", re.IGNORECASE | re.MULTILINE)
 
@@ -42,6 +49,141 @@ def _check_reasons(checks: list[dict[str, Any]], exam_gate: str = EXAM_GATE) -> 
         reasons.append("exam-integrity has not run")
     if not any((c.get("name") or c.get("context")) == exam_gate for c in checks):
         reasons.append(f"{exam_gate} has not run")
+    return reasons
+
+
+class _Reads:
+    """The D29 reads of one decision (workflow runs, the head's ci.yml, compares), each made once.
+
+    `gh` is scoped to the PR's repository: its `repos/{owner}/{repo}/` paths name it.
+    """
+
+    def __init__(self, gh: claims.Run, repo: str | None, wf_repo: str, head: str) -> None:
+        self.gh, self.repo, self.wf_repo, self.head = gh, repo, wf_repo, head
+        self.cache: dict[str, str | None] = {}
+
+    def _api(self, *args: str) -> str | None:
+        key = " ".join(args)
+        if key not in self.cache:
+            try:
+                self.cache[key] = self.gh(["api", *args])
+            except (RuntimeError, OSError):
+                self.cache[key] = None
+        return self.cache[key]
+
+    def run_of(self, url_repo: str, run_id: str) -> dict[str, Any] | None:
+        """The run, read in the PR's repository.
+
+        Without `--repo` the PR's repository has no name here, so the run is also read under the
+        repository its URL names: run ids are unique across GitHub, so both reads succeed only
+        when the URL names the PR's repository.
+        """
+        texts = [self._api(f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}")]
+        if not self.repo:
+            texts.append(self._api(f"repos/{url_repo}/actions/runs/{run_id}"))
+        if any(t is None for t in texts):
+            return None
+        try:
+            data = json.loads(texts[0] or "")
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def ci_jobs(self) -> dict[str, Any] | None:
+        """The jobs of the head's ci.yml (raw text, or the API's base64 JSON)."""
+        text = self._api("-H", RAW, f"repos/{{owner}}/{{repo}}/contents/{CI_FILE}?ref={self.head}")
+        if text is None:
+            return None
+        try:
+            wrapped = json.loads(text)
+            if isinstance(wrapped, dict) and wrapped.get("encoding") == "base64":
+                text = base64.b64decode(wrapped.get("content") or "").decode("utf-8")
+        except ValueError:
+            pass
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError:
+            return None
+        jobs = data.get("jobs") if isinstance(data, dict) else None
+        return jobs if isinstance(jobs, dict) else None
+
+    def on_main(self, sha: str) -> bool:
+        """The workflows repository's compare of main with `sha` says `behind` or `identical`."""
+        try:
+            status = json.loads(self._api(f"repos/{self.wf_repo}/compare/main...{sha}") or "")
+        except ValueError:
+            return False
+        return isinstance(status, dict) and status.get("status") in ("behind", "identical")
+
+
+def _shown(job_id: str, job: Any) -> str:
+    """The name GitHub shows for a job: its `name:`, else its id."""
+    name = job.get("name") if isinstance(job, dict) else None
+    return str(name) if name else job_id
+
+
+def _binding_reason(check: dict[str, Any], workflow: str, reads: _Reads) -> str | None:
+    """Why a SUCCESS exam check is not backed by the pinned reusable workflow (D29), or None."""
+    name = check.get("name") or check.get("context") or "?"
+    if check.get("__typename") != "CheckRun":
+        return f"{name} is a commit status, not a check run"
+    caller, sep, _ = name.partition(" / ")
+    if not sep:
+        return f"{name} has no caller job part (`<caller> / <job>`)"
+    m = JOB_URL.match(check.get("detailsUrl") or "")
+    if not m:
+        return f"{name}: details URL is not a job of a workflow run"
+    url_repo, run_id = m.group(1), m.group(2)
+    if reads.repo and url_repo.lower() != reads.repo.lower():
+        return f"{name}: details URL is a run of {url_repo}, not of {reads.repo}"
+    run = reads.run_of(url_repo, run_id)
+    if run is None:
+        return f"{name}: run {run_id} is not a readable workflow run of this repository"
+    if run.get("path") != CI_FILE:
+        return f"{name}: run {run_id} is of {run.get('path')}, not {CI_FILE}"
+    if str(run.get("head_sha") or "").lower() != reads.head:
+        return f"{name}: run {run_id} is not for head {reads.head[:7]}"
+    called = f"{reads.wf_repo}/.github/workflows/{workflow}"
+    refs = {
+        str(r.get("path")): str(r.get("sha"))
+        for r in run.get("referenced_workflows") or []
+        if isinstance(r, dict) and str(r.get("path")).partition("@")[0].lower() == called.lower()
+    }
+    if not refs:
+        return f"{name}: run {run_id} does not call {called}"
+    jobs = reads.ci_jobs()
+    if jobs is None:
+        return f"{name}: cannot read {CI_FILE} at head {reads.head[:7]}"
+    if any(_shown(j, job) == name for j, job in jobs.items()):
+        return f"{name}: a job of {CI_FILE} is shown under the full check name"
+    callers = [job for j, job in jobs.items() if _shown(j, job) == caller]
+    if len(callers) != 1:
+        return f"{name}: {CI_FILE} has {len(callers)} jobs named {caller!r}, not one"
+    uses = callers[0].get("uses") if isinstance(callers[0], dict) else None
+    if uses not in refs:
+        return f"{name}: job {caller!r} does not use the {workflow} that run {run_id} called"
+    if not reads.on_main(refs[uses]):
+        return f"{name}: {workflow}@{refs[uses][:7]} is not on main of {reads.wf_repo}"
+    return None
+
+
+def _binding_reasons(checks: list[dict[str, Any]], exam_gate: str, reads: _Reads) -> list[str]:
+    """D29 for every SUCCESS exam gate and exam-integrity check (other states hold already)."""
+    reasons = []
+    for c in checks:
+        name = c.get("name") or c.get("context") or ""
+        state = (c.get("conclusion") or c.get("state") or "").upper()
+        if c.get("status", "COMPLETED") != "COMPLETED" or state != "SUCCESS":
+            continue
+        if name == exam_gate:
+            workflow = "junit-gate.yml"
+        elif _is_exam_integrity(name):
+            workflow = "exam-integrity.yml"
+        else:
+            continue
+        reason = _binding_reason(c, workflow, reads)
+        if reason:
+            reasons.append(reason)
     return reasons
 
 
@@ -120,6 +262,7 @@ def decide(
     author: str | None = None,
     exam_gate: str = EXAM_GATE,
     run: claims.Run = claims._run,
+    workflows_repo: str = WORKFLOWS_REPO,
 ) -> list[str]:
     """The HOLD reasons for a pull request; empty means MERGE."""
     gh = claims.scoped(run, repo)
@@ -130,7 +273,9 @@ def decide(
     pr = json.loads(gh(["pr", "view", pr_number, "--json", fields]))
     head = pr["headRefOid"].lower()
     author = author or pr["author"]["login"]
-    reasons = _check_reasons(pr.get("statusCheckRollup") or [], exam_gate)
+    checks = pr.get("statusCheckRollup") or []
+    reasons = _check_reasons(checks, exam_gate)
+    reasons += _binding_reasons(checks, exam_gate, _Reads(gh, repo, workflows_repo, head))
     if pr.get("isCrossRepository") is True:
         reasons.append("cross-repository pull request")
 
@@ -146,7 +291,10 @@ def decide(
 
 
 def run_command(args: Any) -> int:
-    reasons = decide(args.pr, args.session, args.repo, args.author, args.exam_gate)
+    reasons = decide(
+        args.pr, args.session, args.repo, args.author, args.exam_gate,
+        workflows_repo=args.workflows_repo,
+    )
     for r in reasons:
         print("HOLD: " + r)
     if not reasons:

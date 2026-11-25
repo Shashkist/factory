@@ -98,3 +98,114 @@ def test_exam_integrity_names_count(name):
 def test_exam_integrity_lookalikes_do_not_count(name):
     reasons = merge_gate._check_reasons([{"name": name, "conclusion": "SUCCESS"}, GATE])
     assert reasons == ["exam-integrity has not run"]
+
+
+# ---- D29 (#80): the exam checks are bound to the pinned reusable workflows ----------
+
+HEAD = "a" * 40
+PIN = "b" * 40
+RUN = {
+    "path": ".github/workflows/ci.yml",
+    "head_sha": HEAD,
+    "referenced_workflows": [
+        {"path": f"Shashkist/factory/.github/workflows/junit-gate.yml@{PIN}", "sha": PIN},
+    ],
+}
+CI = (
+    "jobs:\n  acceptance:\n"
+    f"    uses: Shashkist/factory/.github/workflows/junit-gate.yml@{PIN}\n"
+)
+BOUND = {
+    "__typename": "CheckRun",
+    "name": "acceptance / gate",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/o/r/actions/runs/7/job/8",
+}
+
+
+def reads(repo: str | None = "o/r", run: dict | None = None, ci: str = CI, status: str = "behind"):
+    calls: list[list[str]] = []
+
+    def gh(args: list[str]) -> str:
+        calls.append(args)
+        path = args[-1]
+        if "/actions/runs/" in path:
+            return json.dumps(run or RUN)
+        if "/contents/" in path:
+            return ci
+        if "/compare/main..." in path:
+            return json.dumps({"status": status})
+        raise RuntimeError("unexpected " + path)
+
+    return merge_gate._Reads(gh, repo, "Shashkist/factory", HEAD), calls
+
+
+def test_bound_gate_check_passes_and_each_read_is_made_once():
+    r, calls = reads()
+    twice = [BOUND, dict(BOUND, name="acceptance / gate")]
+    assert merge_gate._binding_reasons(twice, "acceptance / gate", r) == []
+    assert len(calls) == 3
+    assert calls[1][:3] == ["api", "-H", merge_gate.RAW]
+    assert calls[1][3].endswith(f"/contents/.github/workflows/ci.yml?ref={HEAD}")
+
+
+def test_without_repo_the_run_is_also_read_under_the_url_repository():
+    r, calls = reads(repo=None)
+    assert merge_gate._binding_reason(BOUND, "junit-gate.yml", r) is None
+    runs = [c[-1] for c in calls if "/actions/runs/" in c[-1]]
+    assert runs == ["repos/{owner}/{repo}/actions/runs/7", "repos/o/r/actions/runs/7"]
+
+
+def test_ci_yml_as_base64_json_is_read_too():
+    import base64
+
+    wrapped = json.dumps({"encoding": "base64", "content": base64.b64encode(CI.encode()).decode()})
+    r, _ = reads(ci=wrapped)
+    assert merge_gate._binding_reason(BOUND, "junit-gate.yml", r) is None
+
+
+@pytest.mark.parametrize(
+    ("check", "kw", "words"),
+    [
+        ({"__typename": "StatusContext", "context": "acceptance / gate"}, {}, "commit status"),
+        ({"name": "gate"}, {}, "no caller job part"),
+        ({"detailsUrl": "https://example.invalid/x"}, {}, "not a job of a workflow run"),
+        ({"detailsUrl": "https://github.com/x/y/actions/runs/7/job/8"}, {}, "run of x/y"),
+        ({}, {"run": dict(RUN, path=".github/workflows/x.yml")}, "is of .github/workflows/x.yml"),
+        ({}, {"run": dict(RUN, head_sha="c" * 40)}, "not for head"),
+        ({}, {"run": dict(RUN, referenced_workflows=[])}, "does not call"),
+        ({}, {"ci": CI + "  other:\n    name: acceptance\n"}, "2 jobs named"),
+        ({}, {"ci": CI + "  g:\n    name: acceptance / gate\n"}, "full check name"),
+        ({}, {"ci": CI.replace(PIN, "c" * 40)}, "does not use"),
+        ({}, {"status": "ahead"}, "not on main"),
+    ],
+)
+def test_each_d29_condition_holds_with_a_reason(check, kw, words):
+    r, _ = reads(**kw)
+    c = {**BOUND, **check}
+    if "context" in c:
+        del c["name"]
+    reason = merge_gate._binding_reason(c, "junit-gate.yml", r)
+    assert reason and words in reason, reason
+
+
+def test_unreadable_run_or_ci_yml_holds():
+    def gh(args: list[str]) -> str:
+        raise RuntimeError("404")
+
+    r = merge_gate._Reads(gh, "o/r", "Shashkist/factory", HEAD)
+    reason = merge_gate._binding_reason(BOUND, "junit-gate.yml", r)
+    assert reason and "not a readable workflow run" in reason
+
+
+def test_only_successful_protected_checks_are_bound():
+    r, calls = reads()
+    others = [
+        {"name": "unit", "conclusion": "SUCCESS"},
+        dict(BOUND, conclusion="FAILURE"),
+        {"name": "exam-integrity", "conclusion": "SUCCESS", "__typename": "CheckRun"},
+    ]
+    assert merge_gate._binding_reasons(others, "acceptance / gate", r) == [
+        "exam-integrity has no caller job part (`<caller> / <job>`)"
+    ]
+    assert calls == []
