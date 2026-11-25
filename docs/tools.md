@@ -176,6 +176,12 @@ Options: `--workflow` (required, the workflow name), `--event` (required, the tr
 factory-tools incident-gate --workflow "Factory dashboard" --event schedule --previous failure
 ```
 
+## Reusable incident workflow
+
+`.github/workflows/incident.yml` opens (or comments on) the issue `Incident: <workflow> failed`, labelled `type:incident`, `priority:p0`, `status:ready`, in the repository whose workflow failed. Here it runs on `workflow_run` of `CI` (a red push to `main`). A client repository calls it with `uses: Shashkist/factory/.github/workflows/incident.yml@<commit-sha>` from a job triggered by `workflow_run` and passes three inputs: `workflow-name` (the watched CI workflow, used in the title), `run-url` (the failed run) and `conclusion` (only `failure`, `timed_out` and `startup_failure` raise an incident). The calling job must grant `permissions: issues: write` (and `contents: read`), and the three labels must exist in the caller. The caller chooses which runs to send (branch, event).
+
+The incident tool is fetched from the Factory at the pinned commit of the workflow into its own path, never from the caller's tree, and runs with the caller's `GITHUB_TOKEN` and `GH_REPO` set to the caller's repository. If the fetch or the tool fails, a plain `gh issue create` still files the incident.
+
 ## `factory-tools merge-gate`
 
 Decide whether a pull request may merge, from facts only, read-only. Prints `MERGE` (exit 0) or one `HOLD: <reason>` line per reason (exit 1). Takes the PR number, `--session NAME` and, when not this repository, `--repo owner/name`; `--author LOGIN` is who may give the review verdict (default: the PR author).
