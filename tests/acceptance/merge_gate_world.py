@@ -30,6 +30,80 @@ CODE_FILE = "src/factory_tools/thing.py"
 SESSION = "lf-pass-1"
 EXAM_GATE = "acceptance / gate"
 
+# D29 (#80): the exam gate and exam-integrity results only count when they are backed by a run
+# of the pinned reusable workflows. The default world backs every protected SUCCESS check run
+# that carries no run data of its own with a genuine, valid run (see `Gate.auto_backing`).
+WF_REPO = "Shashkist/factory"
+PIN = "34f9188d89b057f5cf753b3112e312a6689c88b2"
+RUN_ID = "45624202389"
+GATE_FILE = "junit-gate.yml"
+INTEGRITY_FILE = "exam-integrity.yml"
+CI_PATH = ".github/workflows/ci.yml"
+
+
+def uses(workflow: str, pin: str = PIN, wf_repo: str = WF_REPO) -> str:
+    return wf_repo + "/.github/workflows/" + workflow + "@" + pin
+
+
+def job_url(repo: str, run_id: str, job_id: str) -> str:
+    return "https://github.com/" + repo + "/actions/runs/" + run_id + "/job/" + job_id
+
+
+def real_run(
+    head: str = HEAD,
+    refs: list[tuple[str, str]] | None = None,
+    path: str = CI_PATH,
+    event: str = "pull_request",
+) -> dict[str, Any]:
+    """A workflow run of ci.yml as `gh api repos/<r>/actions/runs/<id>` returns it.
+
+    `refs` are (path@sha, sha) pairs; by default the two reusable workflows this repository's
+    ci.yml calls, both listed, as GitHub does even for a skipped caller job.
+    """
+    if refs is None:
+        refs = [(uses(GATE_FILE), PIN), (uses(INTEGRITY_FILE), PIN)]
+    return {
+        "id": 1,
+        "path": path,
+        "head_sha": head,
+        "event": event,
+        "referenced_workflows": [{"path": p, "sha": s} for p, s in refs],
+    }
+
+
+def caller(job_id: str, workflow: str, pin: str = PIN, wf_repo: str = WF_REPO, **extra: str) -> str:
+    """A caller job of a reusable workflow (extra keys like `if_` are written as `if:`)."""
+    lines = ["  " + job_id + ":"]
+    for k, v in extra.items():
+        lines.append("    " + k.rstrip("_").replace("_", "-") + ": " + v)
+    lines.append("    uses: " + uses(workflow, pin, wf_repo))
+    return "\n".join(lines) + "\n"
+
+
+def plain_job(job_id: str, shown: str | None = None) -> str:
+    """An ordinary job whose only step is `run: true`, optionally shown under another name."""
+    named = "    name: " + shown + "\n" if shown else ""
+    steps = "    runs-on: ubuntu-latest\n    steps:\n      - run: true\n"
+    return "  " + job_id + ":\n" + named + steps
+
+
+CI_HEAD = (
+    "name: CI\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\njobs:\n"
+    "  checks:\n    name: Lint, types, unit tests\n    runs-on: ubuntu-latest\n"
+    "    steps:\n      - run: uv run pytest tests/unit -q\n"
+)
+
+
+def ci_yml(*jobs: str) -> str:
+    """A ci.yml; with no jobs given, the callers of this repository's own ci.yml."""
+    if not jobs:
+        jobs = (
+            caller("acceptance", GATE_FILE),
+            caller("exam-integrity", INTEGRITY_FILE, if_="github.event_name == 'pull_request'"),
+        )
+    return CI_HEAD + "".join(jobs)
+
+
 SITECUSTOMIZE = '''\
 import shutil
 import subprocess
@@ -58,6 +132,25 @@ shutil.which = _which_gh
 
 def check(name: str, conclusion: str = "SUCCESS", status: str = "COMPLETED") -> dict[str, str]:
     return {"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion}
+
+
+def run_check(
+    name: str, repo: str, run_id: str, job_id: str, conclusion: str = "SUCCESS"
+) -> dict[str, str]:
+    """A check run as `gh pr view --json statusCheckRollup` shows it, backed by a job URL."""
+    c = check(name, conclusion)
+    c["detailsUrl"] = job_url(repo, run_id, job_id)
+    c["workflowName"] = "CI"
+    return c
+
+
+def status_context(context: str, state: str = "SUCCESS") -> dict[str, str]:
+    return {
+        "__typename": "StatusContext",
+        "context": context,
+        "state": state,
+        "targetUrl": "https://example.invalid/status",
+    }
 
 
 def good_checks() -> list[dict[str, str]]:
@@ -125,16 +218,81 @@ class Gate:
         # The conclusion of the exam gate check added to a non-empty rollup that lacks one
         # (#76: the gate needs it to be SUCCESS). None adds nothing, so it is missing.
         self.exam_gate: str | None = "SUCCESS"
+        # D29 data served by the fake gh. `runs` maps a run id to its API object, `ci_yml` is the
+        # head's ci.yml text, `compare` maps a workflows-repo sha to its compare status against
+        # main. While `runs` is None (the default) the world backs every protected SUCCESS
+        # check run without run data by a valid run (`auto_backing`); a case that sets `runs`
+        # owns all three and the rollup's details URLs.
+        self.runs: dict[str, dict[str, Any]] | None = None
+        self.ci_yml: str | None = None
+        self.compare: dict[str, str] = {PIN: "behind"}
+        self.wf_repo = WF_REPO
+        self.pr_repo = HERE
+        self.exam_gate_name = EXAM_GATE
+
+    def auto_backing(
+        self, rollup: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+        """The rollup with run data added to protected SUCCESS check runs, the runs, ci.yml.
+
+        A bare `exam-integrity` is shown as `exam-integrity / exam-integrity`, the name a
+        reusable-workflow call really gives it (a caller job cannot also be the job shown under
+        the full check name).
+        """
+        out: list[dict[str, Any]] = []
+        runs: dict[str, Any] = {}
+        callers: dict[str, str] = {}
+        for c in rollup:
+            name = c.get("name") or ""
+            integrity = name == "exam-integrity" or name.endswith(" / exam-integrity")
+            gate = name in (EXAM_GATE, self.exam_gate_name)
+            if (
+                c.get("__typename") != "CheckRun"
+                or c.get("conclusion") != "SUCCESS"
+                or c.get("detailsUrl")
+                or not (integrity or gate)
+            ):
+                out.append(c)
+                continue
+            if name == "exam-integrity":
+                name = "exam-integrity / exam-integrity"
+            if " / " not in name:
+                out.append(c)
+                continue
+            job_id = str(100 + len(out))
+            c = dict(c, name=name, detailsUrl=job_url(self.pr_repo, RUN_ID, job_id))
+            out.append(c)
+            prefix = name.split(" / ")[0]
+            callers[prefix] = caller(
+                prefix, INTEGRITY_FILE if integrity else GATE_FILE, wf_repo=self.wf_repo
+            )
+            runs[RUN_ID] = real_run(
+                head=self.pr["headRefOid"],
+                refs=[
+                    (uses(GATE_FILE, wf_repo=self.wf_repo), PIN),
+                    (uses(INTEGRITY_FILE, wf_repo=self.wf_repo), PIN),
+                ]
+            )
+        return out, runs, ci_yml(*callers.values()) if callers else ci_yml()
 
     def write(self) -> None:
         pr = dict(self.pr)
         rollup = list(pr.get("statusCheckRollup") or [])
         if rollup and self.exam_gate and not any(c.get("name") == EXAM_GATE for c in rollup):
-            pr["statusCheckRollup"] = rollup + [check(EXAM_GATE, self.exam_gate)]
+            rollup = rollup + [check(EXAM_GATE, self.exam_gate)]
+        runs, text = self.runs, self.ci_yml
+        if runs is None:
+            rollup, runs, text = self.auto_backing(rollup)
+        pr["statusCheckRollup"] = rollup
         repo = {"prs": {"9": pr}, "commits": self.files, "issues": self.issues}
+        repos = {HERE: repo, OTHER: repo}
+        repos.setdefault(self.wf_repo, repo)
+        keys = {self.pr_repo.lower(), HERE.lower(), OTHER.lower()}
+        contents = {k: {CI_PATH + "@" + pr["headRefOid"]: text or ci_yml()} for k in keys}
         self.state_path.write_text(
-            json.dumps({"default": HERE, "calls": [], "writes": [],
-                        "repos": {HERE: repo, OTHER: repo}}),
+            json.dumps({"default": HERE, "calls": [], "writes": [], "repos": repos,
+                        "runs": {k: runs for k in keys}, "contents": contents,
+                        "compare": {self.wf_repo.lower(): self.compare}}),
             encoding="utf-8",
         )
 
@@ -142,12 +300,22 @@ class Gate:
         data: dict[str, Any] = json.loads(self.state_path.read_text(encoding="utf-8"))
         return data
 
+    def workflow_calls(self) -> list[list[str]]:
+        calls: list[list[str]] = self.state().get("workflow_calls", [])
+        return calls
+
     def calls(self) -> list[list[str]]:
         calls: list[list[str]] = self.state()["calls"]
         return calls
 
     def command(self, *argv: str) -> subprocess.CompletedProcess[str]:
         """`factory-tools <argv>` against the fake gh, in an empty directory."""
+        if "--repo" in argv:
+            self.pr_repo = argv[argv.index("--repo") + 1]
+        if "--workflows-repo" in argv and self.runs is None:
+            self.wf_repo = argv[argv.index("--workflows-repo") + 1]
+        if "--exam-gate" in argv:
+            self.exam_gate_name = argv[argv.index("--exam-gate") + 1]
         self.write()
         e = env(
             {

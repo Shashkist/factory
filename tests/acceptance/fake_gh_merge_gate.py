@@ -22,13 +22,22 @@ Run as: python fake_gh_merge_gate.py <gh args>, with FAKE_GH_STATE pointing at a
   placeholder while `--repo` points elsewhere, fails.
 * A commit entry is a path (served as {"filename": path}) or a full file object (served as is,
   e.g. {"status": "renamed", "filename": new, "previous_filename": old}).
+* `api repos/<o>/<r>/actions/runs/<id>` returns the run stored under `runs` for that repository
+  (`{"runs": {"o/r": {"<id>": {...}}}}`; a missing one is a 404). `api repos/<o>/<r>/contents/
+  <path>?ref=<sha>` returns the file stored under `contents` (`{"o/r": {"<path>@<sha>": text}}`):
+  JSON with base64 `content` by default, the raw text when a `-H Accept: ...raw` header is
+  given; the ref is required. `api repos/<o>/<r>/compare/main...<sha>` returns {"status": ...}
+  from `compare` (`{"o/r": {"<sha>": "behind"}}`; a base other than `main` or an unknown sha is a
+  404). Actions runs and contents are only served for the repository the pull request is in; the
+  workflows repository's compare is served for any known repository.
 * `api` accepts `--paginate` and returns the whole list in one object (the gate may use it).
 * `issue view <n> --json comments` returns {"comments": [...]} (empty for an unknown issue).
 * Anything that writes (pr merge, comment, review, edit, close, api -X ...) is recorded in
   `writes` and refused: the gate is read-only.
-Every call is recorded in `calls`.
+Every call is recorded in `calls`, except compare calls (`workflow_calls`).
 """
 
+import base64
 import json
 import os
 import sys
@@ -39,7 +48,11 @@ WRITES = {"merge", "comment", "review", "edit", "close", "reopen", "ready", "cre
 
 with open(STATE, encoding="utf-8") as f:
     s = json.load(f)
-s["calls"].append(args)
+# A compare call reads the workflows repository, not the pull request's: it is recorded in
+# `workflow_calls`, so `calls` keeps listing only reads of the pull request's own repository.
+is_compare = len(args) > 1 and args[0] == "api" and any("/compare/" in a for a in args)
+s.setdefault("workflow_calls", [])
+s["calls" if not is_compare else "workflow_calls"].append(args)
 
 
 def save() -> None:
@@ -93,21 +106,57 @@ if args[:2] == ["pr", "view"]:
     print(json.dumps(pr))
 elif group == "api":
     path = next((a for a in args[1:] if a.startswith("repos/")), None)
-    if path is None or "/commits/" not in path:
+    if path is None:
         fail("unsupported api call: " + " ".join(args))
     if path.startswith("repos/{owner}/{repo}/"):
         path = "repos/" + repo + path[len("repos/{owner}/{repo}"):]
-    parts = path.split("/")
+    parts = path.split("?")[0].split("/")
     target = "/".join(parts[1:3])
+    kind = parts[3] if len(parts) > 3 else ""
     state = lookup(target)
-    if s.get("resolved") and target.lower() != s["resolved"].lower():
+    if kind not in ("commits", "actions", "contents", "compare"):
+        fail("unsupported api call: " + " ".join(args))
+    # Only the workflows repository (compare) may differ from the pull request's repository.
+    if kind != "compare" and s.get("resolved") and target.lower() != s["resolved"].lower():
         fail("api read " + target + " but the pull request is in " + s["resolved"])
-    oid = path.rsplit("/commits/", 1)[1].split("?")[0]
-    if oid not in state["commits"]:
-        fail("no commit " + oid)
-    save()
-    entries = [{"filename": f} if isinstance(f, str) else f for f in state["commits"][oid]]
-    print(json.dumps({"files": entries}))
+    if kind == "commits":
+        oid = path.rsplit("/commits/", 1)[1].split("?")[0]
+        if oid not in state["commits"]:
+            fail("no commit " + oid)
+        save()
+        entries = [{"filename": f} if isinstance(f, str) else f for f in state["commits"][oid]]
+        print(json.dumps({"files": entries}))
+    elif kind == "compare":
+        base, _, sha = "/".join(parts[4:]).partition("...")
+        status = s.get("compare", {}).get(target.lower(), {}).get(sha)
+        if base != "main" or status is None:
+            fail("404 compare " + "/".join(parts[4:]))
+        save()
+        print(json.dumps({"status": status, "ahead_by": 0, "behind_by": 0}))
+    elif kind == "actions":
+        if len(parts) != 6 or parts[4] != "runs":
+            fail("unsupported api call: " + " ".join(args))
+        found = s.get("runs", {}).get(target.lower(), {}).get(parts[5])
+        if found is None:
+            fail("404 no workflow run " + parts[5])
+        save()
+        print(json.dumps(found))
+    else:
+        file_path = "/".join(parts[4:])
+        query = path.split("?", 1)[1] if "?" in path else ""
+        ref = next((q[4:] for q in query.split("&") if q.startswith("ref=")), "")
+        text = s.get("contents", {}).get(target.lower(), {}).get(file_path + "@" + ref)
+        if text is None:
+            fail("404 no file " + file_path + " at ref '" + ref + "'")
+        save()
+        headers = [args[i + 1] for i, a in enumerate(args) if a in ("-H", "--header")]
+        if any("raw" in h for h in headers):
+            sys.stdout.write(text)
+        else:
+            b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+            chunks = [b64[i : i + 60] for i in range(0, len(b64), 60)]
+            wrapped = "\n".join(chunks) + "\n"
+            print(json.dumps({"path": file_path, "encoding": "base64", "content": wrapped}))
 elif args[:2] == ["issue", "view"]:
     state = lookup(repo)
     save()

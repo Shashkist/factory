@@ -184,9 +184,20 @@ The incident tool is fetched from the Factory at the pinned commit of the workfl
 
 ## `factory-tools merge-gate`
 
-Decide whether a pull request may merge, from facts only, read-only. Prints `MERGE` (exit 0) or one `HOLD: <reason>` line per reason (exit 1). Takes the PR number, `--session NAME` and, when not this repository, `--repo owner/name`; `--author LOGIN` is who may give the review verdict (default: the PR author); `--exam-gate NAME` renames the exam gate check (default `acceptance / gate`, exact name).
+Decide whether a pull request may merge, from facts only, read-only. Prints `MERGE` (exit 0) or one `HOLD: <reason>` line per reason (exit 1). Takes the PR number, `--session NAME` and, when not this repository, `--repo owner/name`; `--author LOGIN` is who may give the review verdict (default: the PR author); `--exam-gate NAME` renames the exam gate check (default `acceptance / gate`, exact name); `--workflows-repo owner/name` is the repository whose pinned `junit-gate.yml` and `exam-integrity.yml` must back the exam checks (default `Shashkist/factory`).
 
 It holds unless: every check passed, `exam-integrity` succeeded and the exam gate check concluded SUCCESS (skipped, neutral, missing or any other conclusion holds, with a reason naming it; other checks may be neutral or skipped); the latest `Review round <k>: APPROVE at <sha>` verdict is for the current head and the review round is at most 2; at most 5 commits changed code; no commit changes `tests/acceptance/` together with code; the PR is not cross-repository; and the session holds the claim on every issue the PR closes.
+
+The exam gate check and every `<caller> / exam-integrity` check count as SUCCESS only when they come from the pinned reusable workflows (D29), otherwise one `HOLD:` line names the check and the failed condition:
+
+1. it is a check run, never a commit status (a bare `exam-integrity` has no caller part and never counts);
+2. its details URL is a job of a workflow run of the PR's repository (`https://github.com/<repo>/actions/runs/<id>/job/<id>`) whose `path` is `.github/workflows/ci.yml` and whose `head_sha` is the PR head;
+3. the run's `referenced_workflows` lists `<workflows repo>/.github/workflows/junit-gate.yml@<sha>` (respectively `exam-integrity.yml`) with a `sha` on the workflows repository's `main` (`compare/main...<sha>` is `behind` or `identical`);
+4. the head's `ci.yml` has exactly one job shown (its `name:`, else its id) under the part of the check name before ` / `, its `uses:` is exactly that referenced `path@sha`, and no job is shown under the full check name; a `uses:` that is not a string holds. The file is read in its raw form and refused when a YAML key repeats.
+
+The line names the first failed condition in this order. Because GitHub evaluates expressions in a job's `name:` and shows a job that calls a local workflow as `<caller> / <called job>`, the file itself also holds, with one line per job, when a job's `name:` contains `${{` or a job's shown name contains ` / ` (D29 amendment 1).
+
+The gate reads each run, the head's `ci.yml` and each compare once per PR. Without `--repo` the run is read both in the checkout's repository and under the repository its URL names; run ids are unique on GitHub, so both succeed only when the URL names the PR's repository.
 
 ```
 factory-tools merge-gate 9 --repo owner/name --session lf-a1b2

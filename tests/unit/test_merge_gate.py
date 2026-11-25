@@ -98,3 +98,166 @@ def test_exam_integrity_names_count(name):
 def test_exam_integrity_lookalikes_do_not_count(name):
     reasons = merge_gate._check_reasons([{"name": name, "conclusion": "SUCCESS"}, GATE])
     assert reasons == ["exam-integrity has not run"]
+
+
+# ---- D29 (#80): the exam checks are bound to the pinned reusable workflows ----------
+
+HEAD = "a" * 40
+PIN = "b" * 40
+RUN = {
+    "path": ".github/workflows/ci.yml",
+    "head_sha": HEAD,
+    "referenced_workflows": [
+        {"path": f"Shashkist/factory/.github/workflows/junit-gate.yml@{PIN}", "sha": PIN},
+    ],
+}
+CI = (
+    "jobs:\n  acceptance:\n"
+    f"    uses: Shashkist/factory/.github/workflows/junit-gate.yml@{PIN}\n"
+)
+BOUND = {
+    "__typename": "CheckRun",
+    "name": "acceptance / gate",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/o/r/actions/runs/7/job/8",
+}
+
+
+def reads(repo: str | None = "o/r", run: dict | None = None, ci: str = CI, status: str = "behind"):
+    calls: list[list[str]] = []
+
+    def gh(args: list[str]) -> str:
+        calls.append(args)
+        path = args[-1]
+        if "/actions/runs/" in path:
+            return json.dumps(run or RUN)
+        if "/contents/" in path:
+            return ci
+        if "/compare/main..." in path:
+            return json.dumps({"status": status})
+        raise RuntimeError("unexpected " + path)
+
+    return merge_gate._Reads(gh, repo, "Shashkist/factory", HEAD), calls
+
+
+def test_bound_gate_check_passes_and_each_read_is_made_once():
+    r, calls = reads()
+    twice = [BOUND, dict(BOUND, name="acceptance / gate")]
+    assert merge_gate._binding_reasons(twice, "acceptance / gate", r) == []
+    assert len(calls) == 3
+    assert calls[2][:3] == ["api", "-H", merge_gate.RAW]
+    assert calls[2][3].endswith(f"/contents/.github/workflows/ci.yml?ref={HEAD}")
+
+
+def test_without_repo_the_run_is_also_read_under_the_url_repository():
+    r, calls = reads(repo=None)
+    assert merge_gate._binding_reason(BOUND, "junit-gate.yml", r) is None
+    runs = [c[-1] for c in calls if "/actions/runs/" in c[-1]]
+    assert runs == ["repos/{owner}/{repo}/actions/runs/7", "repos/o/r/actions/runs/7"]
+
+
+def test_ci_yml_as_base64_json_is_not_read():
+    import base64
+
+    wrapped = json.dumps({"encoding": "base64", "content": base64.b64encode(CI.encode()).decode()})
+    r, _ = reads(ci=wrapped)
+    reason = merge_gate._binding_reason(BOUND, "junit-gate.yml", r)
+    assert reason and "cannot read" in reason
+
+
+def test_ci_yml_with_a_duplicate_key_holds_and_anchors_still_merge():
+    r, _ = reads(ci=CI + "  acceptance:\n    runs-on: x\n")
+    reason = merge_gate._binding_reason(BOUND, "junit-gate.yml", r)
+    assert reason and "unique keys" in reason
+    anchored = (
+        "base: &b\n  runs-on: x\njobs:\n  acceptance:\n    <<: *b\n"
+        f"    uses: Shashkist/factory/.github/workflows/junit-gate.yml@{PIN}\n"
+    )
+    r, _ = reads(ci=anchored)
+    assert merge_gate._binding_reason(BOUND, "junit-gate.yml", r) is None
+
+
+@pytest.mark.parametrize("value", ["{path: x}", "[x]", "1"])
+def test_non_string_uses_holds_with_a_reason(value):
+    r, _ = reads(ci="jobs:\n  acceptance:\n    uses: " + value + "\n")
+    reason = merge_gate._binding_reason(BOUND, "junit-gate.yml", r)
+    assert reason and "not a string" in reason
+
+
+@pytest.mark.parametrize(
+    ("job", "words"),
+    [
+        ("  g:\n    name: \"${{ 'acceptance / gate' }}\"\n", "named by an expression"),
+        ("  g:\n    name: x / y\n    uses: ./.github/workflows/l.yml\n", "shown as 'x / y'"),
+        ("  x / y:\n    uses: ./.github/workflows/l.yml\n", "shown as 'x / y'"),
+        # D29 amendment 2 (review round 2 of #84): GitHub may trim the shown name.
+        ("  g:\n    name: \" acceptance\"\n    uses: ./.github/workflows/l.yml\n", "white space"),
+        ("  g:\n    name: \"acceptance \"\n    uses: ./.github/workflows/l.yml\n", "white space"),
+        ("  g:\n    name: \"accept  ance\"\n", "white space"),
+    ],
+)
+def test_expression_or_slashed_job_names_hold_once_for_the_file(job, words):
+    r, _ = reads(ci=CI + job)
+    twice = [BOUND, dict(BOUND, name="acceptance / gate")]
+    reasons = merge_gate._binding_reasons(twice, "acceptance / gate", r)
+    assert len(reasons) == 1 and words in reasons[0], reasons
+
+
+def test_expressions_outside_job_names_are_fine():
+    ci = CI + "  docs:\n    if: ${{ true }}\n    steps:\n      - run: echo ${{ github.sha }}\n"
+    r, _ = reads(ci=ci)
+    assert merge_gate._binding_reasons([BOUND], "acceptance / gate", r) == []
+
+
+def test_not_on_main_is_named_before_a_ci_yml_condition():
+    r, calls = reads(ci=CI.replace(PIN, "c" * 40), status="ahead")
+    reason = merge_gate._binding_reason(BOUND, "junit-gate.yml", r)
+    assert reason and "not on main" in reason, reason
+    assert not any("/contents/" in c[-1] for c in calls)
+
+
+@pytest.mark.parametrize(
+    ("check", "kw", "words"),
+    [
+        ({"__typename": "StatusContext", "context": "acceptance / gate"}, {}, "commit status"),
+        ({"name": "gate"}, {}, "no caller job part"),
+        ({"detailsUrl": "https://example.invalid/x"}, {}, "not a job of a workflow run"),
+        ({"detailsUrl": "https://github.com/x/y/actions/runs/7/job/8"}, {}, "run of x/y"),
+        ({}, {"run": dict(RUN, path=".github/workflows/x.yml")}, "is of .github/workflows/x.yml"),
+        ({}, {"run": dict(RUN, head_sha="c" * 40)}, "not for head"),
+        ({}, {"run": dict(RUN, referenced_workflows=[])}, "does not call"),
+        ({}, {"ci": CI + "  other:\n    name: acceptance\n"}, "2 jobs named"),
+        ({}, {"ci": CI + "  g:\n    name: acceptance / gate\n"}, "full check name"),
+        ({}, {"ci": CI.replace(PIN, "c" * 40)}, "does not use"),
+        ({}, {"status": "ahead"}, "not on main"),
+    ],
+)
+def test_each_d29_condition_holds_with_a_reason(check, kw, words):
+    r, _ = reads(**kw)
+    c = {**BOUND, **check}
+    if "context" in c:
+        del c["name"]
+    reason = merge_gate._binding_reason(c, "junit-gate.yml", r)
+    assert reason and words in reason, reason
+
+
+def test_unreadable_run_or_ci_yml_holds():
+    def gh(args: list[str]) -> str:
+        raise RuntimeError("404")
+
+    r = merge_gate._Reads(gh, "o/r", "Shashkist/factory", HEAD)
+    reason = merge_gate._binding_reason(BOUND, "junit-gate.yml", r)
+    assert reason and "not a readable workflow run" in reason
+
+
+def test_only_successful_protected_checks_are_bound():
+    r, calls = reads()
+    others = [
+        {"name": "unit", "conclusion": "SUCCESS"},
+        dict(BOUND, conclusion="FAILURE"),
+        {"name": "exam-integrity", "conclusion": "SUCCESS", "__typename": "CheckRun"},
+    ]
+    assert merge_gate._binding_reasons(others, "acceptance / gate", r) == [
+        "exam-integrity has no caller job part (`<caller> / <job>`)"
+    ]
+    assert calls == []
