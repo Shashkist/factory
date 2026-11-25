@@ -1,9 +1,54 @@
+# Incident workflow: opens or updates the "Incident: <workflow> failed" issue
+# in the repository where a workflow failed.
+#
+# This repository runs it on its own trigger (workflow_run of CI, a red push
+# to main). A client repository calls it as a reusable workflow:
+#
+#   on:
+#     workflow_run:
+#       workflows: ["CI"]
+#       types: [completed]
+#   jobs:
+#     incident:
+#       if: github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push'
+#       permissions:
+#         contents: read
+#         issues: write        # required: the incident issue is opened in the caller
+#       uses: Shashkist/factory/.github/workflows/incident.yml@<commit-sha>
+#       with:
+#         workflow-name: ${{ github.event.workflow_run.name }}
+#         run-url: ${{ github.event.workflow_run.html_url }}
+#         conclusion: ${{ github.event.workflow_run.conclusion }}
+#
+# The labels type:incident, priority:p0 and status:ready must exist in the
+# calling repository; if one is missing, gh issue create fails and the job goes red.
+# The caller's GITHUB_TOKEN is used and every gh call targets the caller's
+# repository (GH_REPO), never the Factory. The caller decides which runs count
+# (branch, event); the workflow only filters on the conclusion.
+#
+# The tool (the same code as python -m factory_tools.ci.incident) is fetched
+# from the Factory at the pinned commit of this workflow into its own path,
+# never from the caller's tree.
 name: Incident
 
 on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
+  workflow_call:
+    inputs:
+      workflow-name:
+        description: Name of the CI workflow that was watched (it becomes the incident title, "Incident <name> failed").
+        type: string
+        required: true
+      run-url:
+        description: URL of the failed run, written into the incident issue or comment.
+        type: string
+        required: true
+      conclusion:
+        description: Conclusion of the watched run; only failure, timed_out and startup_failure raise an incident.
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -11,33 +56,37 @@ permissions:
 
 jobs:
   incident:
-    # Only a red CI run of a push to main raises an incident; PR runs do not.
+    # workflow_run (this repository): only a red CI run of a push to main.
+    # workflow_call: the caller passes the conclusion and chooses which runs to send.
     if: >-
-      contains(fromJSON('["failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion) &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
+      contains(fromJSON('["failure","timed_out","startup_failure"]'),
+        inputs.conclusion || github.event.workflow_run.conclusion) &&
+      (inputs.conclusion != '' ||
+        (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push'))
     runs-on: ubuntu-latest
     concurrency:
-      group: incident-${{ github.event.workflow_run.name }}
+      group: incident-${{ inputs.workflow-name || github.event.workflow_run.name }}
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
-      WF_NAME: ${{ github.event.workflow_run.name }}
-      RUN_URL: ${{ github.event.workflow_run.html_url }}
+      WF_NAME: ${{ inputs.workflow-name || github.event.workflow_run.name }}
+      RUN_URL: ${{ inputs.run-url || github.event.workflow_run.html_url }}
     steps:
-      # Fail open: a broken checkout or script must never hide an incident.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Fail open: a failed fetch must never hide an incident; the fallback below still files it.
+      - name: Fetch the incident tool at the pinned Factory commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         continue-on-error: true
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .factory-tools
           persist-credentials: false
-      # The labels type:incident, priority:p0 and status:ready must exist in the
-      # repository; if one is missing, gh issue create fails and this job goes red.
       # Runs the file directly (the same code as python -m factory_tools.ci.incident)
       # so a broken package __init__ cannot stop it.
       - name: Comment on or open the incident issue
         run: |
-          python3 src/factory_tools/ci/incident.py --workflow "$WF_NAME" --run-url "$RUN_URL" || \
+          python3 .factory-tools/src/factory_tools/ci/incident.py --workflow "$WF_NAME" --run-url "$RUN_URL" || \
             gh issue create --title "Incident: $WF_NAME failed" \
               --label "type:incident,priority:p0,status:ready" \
               --body "The $WF_NAME workflow failed: $RUN_URL"
