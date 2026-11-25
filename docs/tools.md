@@ -192,6 +192,32 @@ It holds unless: every check passed and `exam-integrity` succeeded; the latest `
 factory-tools merge-gate 9 --repo owner/name --session lf-a1b2
 ```
 
+## Reusable workflow `exam-integrity.yml`
+
+Called from a client's pull-request CI with `uses: Shashkist/factory/.github/workflows/exam-integrity.yml@<commit-sha>`. It refuses a PR in which one commit changes the exam together with code, the exam changes after code, or the PR changes the exam together with the CI surface. The judge is `python -m factory_tools.ci.exam_integrity <base> <head> [--bootstrap] [--exam-paths GLOB ...] [--ci-paths GLOB ...]`, standard library only, also runnable as a plain file.
+
+Inputs (all strings, all optional):
+
+- `base-ref`: the base branch; empty means the base of the calling PR.
+- `exam-paths`: globs naming the exam files, replacing the default (top-level `tests/` except `tests/unit/`, plus pytest configuration files outside `tests/unit/`). For a nested layout: `labs/*/tests/acceptance/**`.
+- `ci-paths`: globs naming the CI surface, replacing the default (`src/factory_tools/ci/` and `.github/workflows/ci.yml`). A client lists its own workflow and scripts here, for example `.github/workflows/lf-ci.yml`.
+
+Several globs go in one string, separated by whitespace or newlines (a YAML `|` block with one glob per line). They are split without shell expansion, so a glob is never matched against the runner's files. Globs are fnmatch style against the repo-relative path, and `*` and `**` both match across `/`. Empty inputs mean the defaults, exactly as before.
+
+Each input reaches the judge as one argument and is split on whitespace there, so an input can never become a flag. Globs are normalised: a leading `./` is dropped and a trailing `/` means `<dir>/**` (`tests/acceptance/` is `tests/acceptance/**`; a bare `tests/acceptance` matches only a file of that name). The pytest configuration files (`conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini`, `setup.cfg`) outside a `tests/unit/` path always count as exam, whatever `exam-paths` says (with the defaults only the top-level `tests/unit/` is exempt; with `exam-paths` any `tests/unit/` folder is, so the client's exam command must not collect a unit folder, or `exam-paths` must name that folder's `conftest.py`). The "top-level `tests/` is never code" exception applies only with the default exam rules.
+
+The caller workflow's inputs come from the PR's own tree, so a PR can edit `exam-paths` or `ci-paths` in the caller workflow itself. A client should therefore list its caller workflow in `ci-paths` (it then counts as a reviewed path: a PR cannot change it together with the exam) and have it reviewed like any CI file.
+
+```
+exam-integrity:
+  uses: Shashkist/factory/.github/workflows/exam-integrity.yml@<commit-sha>
+  with:
+    exam-paths: "labs/*/tests/acceptance/**"
+    ci-paths: |
+      .github/workflows/lf-ci.yml
+      ci/**
+```
+
 ## `factory-tools worktrees`
 
 The local worktrees and branches of finished work.
