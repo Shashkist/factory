@@ -61,7 +61,10 @@ def test_nested_exam_first_then_code_passes_with_exam_paths(repo: Repo) -> None:
 
 def test_several_exam_globs_are_all_honoured(repo: Repo) -> None:
     repo.commit({"e2e/spec_a.py": "1\n", NESTED_CODE: "1\n"}, "both")
-    bad(repo.check("--exam-paths", "labs/*/tests/acceptance/**", "e2e/**"))
+    r = repo.check("--exam-paths", "e2e/**", "labs/*/tests/acceptance/**")
+    bad(r)
+    assert "FAIL:" in r.stdout, r.stdout
+    assert "unrecognized" not in r.stderr and "usage:" not in r.stderr, r.stderr
 
 
 def test_exam_paths_option_does_not_make_unrelated_files_exam(repo: Repo) -> None:
@@ -98,7 +101,28 @@ def test_ci_paths_surface_is_waived_by_bootstrap(repo: Repo) -> None:
 def test_ci_paths_accepts_several_globs(repo: Repo) -> None:
     repo.commit({NESTED_EXAM: "1\n"}, "exam")
     repo.commit({"ci/run.sh": "1\n"}, "script")
-    bad(nested(repo, "--ci-paths", CALLER_WF, "ci/**"))
+    r = nested(repo, "--ci-paths", "ci/**", CALLER_WF)
+    bad(r)
+    assert "FAIL:" in r.stdout, r.stdout
+    assert "unrecognized" not in r.stderr and "usage:" not in r.stderr, r.stderr
+
+
+def test_ci_paths_one_newline_separated_value_is_split(repo: Repo) -> None:
+    # exam-integrity.yml passes --ci-paths=$CI_PATHS: all globs inside ONE argument
+    repo.commit({NESTED_EXAM: "1\n"}, "exam")
+    repo.commit({"ci/run.sh": "1\n"}, "script")
+    r = nested(repo, f"--ci-paths={CALLER_WF}\nci/**")
+    bad(r)
+    assert "FAIL:" in r.stdout, r.stdout
+    assert "unrecognized" not in r.stderr and "usage:" not in r.stderr, r.stderr
+
+
+def test_exam_paths_one_newline_separated_value_is_split(repo: Repo) -> None:
+    repo.commit({"e2e/spec_a.py": "1\n", NESTED_CODE: "1\n"}, "both")
+    r = repo.check("--exam-paths=e2e/**\nlabs/*/tests/acceptance/**")
+    bad(r)
+    assert "FAIL:" in r.stdout, r.stdout
+    assert "unrecognized" not in r.stderr and "usage:" not in r.stderr, r.stderr
 
 
 # defaults keep today's behaviour
