@@ -225,6 +225,7 @@ def test_criterion_5_mutation_is_rejected() -> None:
 
 
 # 6. PYTEST_DISABLE_PLUGIN_AUTOLOAD defaults on through the input
+DEFAULT_TRUE = "        default: true" + chr(10)
 AUTOLOAD_EXPR = "${{ inputs.disable-pytest-plugin-autoload && '1' || '' }}"
 
 
@@ -250,7 +251,9 @@ def test_criterion_6_mutation_is_rejected() -> None:
     assert AUTOLOAD_EXPR in text
     assert "        default: true\n" in text
     with pytest.raises(AssertionError):
-        check_autoload_default_on(text.replace("        default: true\n", "        default: false\n"))
+        check_autoload_default_on(
+            text.replace(DEFAULT_TRUE, DEFAULT_TRUE.replace("true", "false"))
+        )
     for weak in ("''", "${{ inputs.disable-pytest-plugin-autoload }}"):
         with pytest.raises(AssertionError):
             check_autoload_default_on(text.replace(AUTOLOAD_EXPR, weak))
