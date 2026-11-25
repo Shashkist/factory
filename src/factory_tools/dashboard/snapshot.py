@@ -273,15 +273,14 @@ def add_counts(total: dict[str, Any], one: dict[str, Any]) -> None:
 
 def first_claim(
     per_repo: list[tuple[Source, list[dict[str, Any]]]],
-    comments: Callable[[Source, int], list[dict[str, Any]]] | None = None,
+    comments: Callable[[Source, int], list[dict[str, Any]]],
 ) -> dict[str, Any] | None:
     """The first live claim: in-progress issues before in-review, repositories in order."""
     for status in ("in-progress", "in-review"):
         for src, issues in per_repo:
             for issue in issues:
                 if issue["state"] == "OPEN" and status in label_values(issue, "status:"):
-                    fetch = comments or Source.comments
-                    found = current_claim(issue["number"], fetch(src, issue["number"]))
+                    found = current_claim(issue["number"], comments(src, issue["number"]))
                     if found:
                         return {"repo": src.repo, **found}
     return None
