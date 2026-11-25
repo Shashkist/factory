@@ -182,6 +182,54 @@ def test_c2_a_title_naming_no_repository_stays_in_the_host_view(world, tmp_path)
     assert title in host and title not in other
 
 
+# D21: a title moves only when the short name stands right before the reference ("factory #53", "factory PR #53",
+# "factory issue #53"); a title that merely mentions the factory elsewhere stays with the host.
+
+@pytest.mark.parametrize("title", [
+    "Implement #583 factory package pin",
+    "Fix #26 Factory dashboard incident",
+    "Reviewer for #568 (pinned factory build)",
+    "Learning-factory #4 review",
+])
+def test_c2_a_host_title_that_mentions_the_factory_elsewhere_stays_in_the_host_view(world, tmp_path, title):
+    host, other = both_views(tmp_path, world[1], title)
+    assert title in host, "a host crew node left the host view"
+    assert title not in other, "a host crew node shows in the factory view"
+
+
+@pytest.mark.parametrize("title", ["factory #53 review", "Factory PR #53 review", "factory issue #53 review"])
+def test_c2_a_title_with_the_short_name_right_before_the_reference_is_in_that_view_not_the_hosts(world, tmp_path, title):
+    host, other = both_views(tmp_path, world[1], title)
+    assert title not in host, "a node about factory shows in the Learning_factory view"
+    assert title in other, "a node about factory is missing from the factory view"
+
+
+def test_c2_a_host_title_naming_the_factory_stays_on_the_host_lane_even_if_the_factory_has_that_number(world, tmp_path):
+    title = "Fix #26 Factory dashboard incident"
+    d = shared_live()
+    d["issues"] += [{"issue": 26, "repo": LF, "title": "ALPHA twenty-six lane", "station": "build"},
+                    {"issue": 26, "repo": FA, "title": "BRAVO twenty-six lane", "station": "build"}]
+    d["crew"][0]["children"].append({"id": "x26", "kind": "agent", "type": "implementer", "title": title, "state": "busy",
+                                     "model": "m", "started": T0, "last": T1, "children": []})
+    host = text(page_of(tmp_path, world[1], d))
+    (tmp_path / "fa").mkdir()
+    other = text(page_of(tmp_path / "fa", world[1], d, click="factory"))
+    assert "ALPHA twenty-six lane" in host and "BRAVO twenty-six lane" not in host
+    assert "BRAVO twenty-six lane" in other and "ALPHA twenty-six lane" not in other
+    assert title in host, "the host node is missing from the host view"
+    assert title not in other, "the host node is on factory's lane or in the factory view"
+
+
+def test_c2_an_empty_repository_short_name_in_live_data_captures_no_title(world, tmp_path):
+    title = "Fix #12: broken - retry"   # punctuation pairs would match an empty name as a "whole word"
+    d = shared_live()
+    d["issues"].append({"issue": 5, "repo": "Shashkist/", "title": "EMPTY five lane", "station": "plan"})
+    d["crew"][0]["children"].append({"id": "xe", "kind": "agent", "type": "reviewer", "title": title, "state": "busy",
+                                     "model": "m", "started": T0, "last": T1, "children": []})
+    host = " ".join(text(c) for c in with_class(page_of(tmp_path, world[1], d), "crew-title"))
+    assert title in host, "a host title was captured by an empty repository name"
+
+
 # ---- criterion 3: the lane's detail lines -------------------------------------------------------------------
 
 def lane_live() -> dict:
