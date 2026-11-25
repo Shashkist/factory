@@ -316,3 +316,25 @@ in force · factory · 2026-11-25 · revertible
 **Why.** #76 criteria 1 to 3: a PR that skips its own `acceptance` job skips both the exam and the JUnit gate, and the exam that pins `ci.yml` runs inside that skipped job. The gate runs outside the PR, so it is the place to refuse it. The check *name* is not outside the PR's control: a `ci.yml` change can add a job named `acceptance / gate` that always succeeds, or a commit status of that name; that gap (also for `exam-integrity`) is #80, which ties the result to the pinned reusable workflow. An option, not a profile value, because the gate already takes its configuration on the command line.
 **Alternatives.** Require every check to be SUCCESS (breaks path-scoped jobs a client skips by design, Learning Factory D98); a suffix match (`* / gate`) (a lookalike job could stand in for it); a profile field (no profile reaches the gate today).
 **Revert.** Drop the exam-gate rule and the option from `merge_gate.py`; the #61 case may stay strict.
+
+## D29 · #80: the gate binds the exam gate and exam-integrity checks to the pinned reusable workflow by the run, the head's `ci.yml` and `main`
+in force · factory · 2026-11-25 · revertible
+
+**Finding.** A workflow run's `referenced_workflows` lists every reusable workflow its file calls, also from a job that was skipped (main CI run 45624202389 lists `exam-integrity.yml@34f9188` while its `exam-integrity` job is skipped). A run-level check alone therefore does not stop spoof 1 of #80 (caller renamed to `acceptance-real` with `if: false`, a plain job named `acceptance / gate`). No jobs or check-run API field names the called workflow of a job.
+**Decision.** For each of the two protected checks (the exam gate, default `acceptance / gate`, option `--exam-gate`; exam integrity, a check named `exam-integrity` or ending in ` / exam-integrity`), the gate counts a SUCCESS only when all hold, otherwise `HOLD:` with a line naming the check and the failed condition:
+1. it is a check run of the status rollup (`__typename` `CheckRun`), never a commit status (`StatusContext`);
+2. its details URL names a workflow run of the PR's repository (`/actions/runs/<id>/job/<id>`); that run (`gh api repos/<repo>/actions/runs/<id>`) has `path` `.github/workflows/ci.yml` and `head_sha` equal to the PR head;
+3. the run's `referenced_workflows` has `<workflows repo>/.github/workflows/junit-gate.yml@<sha>` (respectively `exam-integrity.yml`) whose `sha` is on the workflows repository's `main` (`gh api repos/<workflows repo>/compare/main...<sha>` says `behind` or `identical`); the workflows repository is `Shashkist/factory` by default, option `--workflows-repo`;
+4. the head's `ci.yml` (`gh api repos/<repo>/contents/.github/workflows/ci.yml?ref=<head>`) has exactly one job whose shown name (`name:` or the job id) is the part of the check name before ` / `, that job's `uses:` is exactly the referenced `path@sha` of point 3, and no job of the file is shown under the full check name.
+**Why.** #80 criteria 1 to 3. Points 2 and 3 tie the check to a real run of the pinned judge at a reviewed commit; point 4 ties the job to the caller, which the run-level data cannot. The file read is the head's own, which is what ran.
+**Out of scope.** A caller that keeps the pinned `uses:` but passes a `test-command` that writes a fake JUnit file (the judge's inputs, tracked by #10); matrix names.
+**Alternatives.** Run-level `referenced_workflows` only (fails spoof 1, see Finding); hold every PR that changes `ci.yml` (blocks every pin move); a required-workflow ruleset on the repository (owner setting, and the gate must work without it).
+**Revert.** Drop the four conditions from `merge_gate.py`; D28's exact-name rule stays.
+
+## D30 · #63: `v0.1.0` is today's green `main` (95753bb), and its existence is checked at close, not in the exam
+in force · factory · 2026-11-25 · revertible
+
+**Decision.** The tag `v0.1.0` points at 95753bb (`main` with #61, #62, #65 and #76 merged; main CI 45624202389 green). It is created at the start of #63, so `docs/ci.md` can pin every example to `95753bb72e9c5d885376311efea91db7272f9d16 # v0.1.0`. The exam checks criterion 1 offline (every input each reusable workflow declares under `on.workflow_call.inputs` is named in its section of `docs/ci.md`, every `uses: Shashkist/factory/.github/workflows/...` line in the document is pinned by a 40-hex SHA with a `# v<semver>` comment); criterion 2 (the tag exists and its commit's CI is green) is checked with `gh` by the manager and cited in the closing comment, because the exam runs offline and a CI checkout has no tags.
+**Why.** #63 criteria 1 and 2; an exam that calls the network would be flaky and could not run in a cloud session.
+**Alternatives.** Tag the merge commit of the docs PR (the docs could not name its SHA before it exists); a release workflow that tags (more surface than one tag needs).
+**Revert.** `git push origin :refs/tags/v0.1.0` and re-tag; the document's pins follow the tag.
