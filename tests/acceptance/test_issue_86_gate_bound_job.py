@@ -251,3 +251,63 @@ def test_without_the_repo_option_a_job_is_read_no_more_often_than_its_run(tmp):
         jobs = read_count(gh, "jobs", job_id)
         runs = read_count(gh, "runs", run_id)
         assert 1 <= jobs <= max(runs, 1), (job_id, jobs, runs, gh.calls())
+
+
+# ---- round 1 of PR #88: the real job must have succeeded ------------------------------
+
+NOT_SUCCEEDED = {
+    "failure": {"status": "completed", "conclusion": "failure"},
+    "skipped": {"status": "completed", "conclusion": "skipped"},
+    "cancelled": {"status": "completed", "conclusion": "cancelled"},
+    "neutral": {"status": "completed", "conclusion": "neutral"},
+    "in-progress": {"status": "in_progress", "conclusion": None},
+    "queued": {"status": "queued", "conclusion": None},
+    "no-status": {"status": None},
+    "no-conclusion": {"conclusion": None},
+    "no-status-no-conclusion": {"status": None, "conclusion": None},
+    "success-but-not-completed": {"status": "in_progress", "conclusion": "success"},
+    "completed-with-failure-status-only": {"status": "failure"},
+}
+
+
+@pytest.mark.parametrize("target", ["gate", "integrity"])
+@pytest.mark.parametrize("state", sorted(NOT_SUCCEEDED))
+def test_genuine_job_that_did_not_succeed_holds_though_the_check_says_success(
+    tmp, target, state
+):
+    """Right run, head and name, but the job itself failed, was skipped or is not done."""
+    name, job_id, _, other = BOUND[target]
+    gh = w80.broken(tmp, target)
+    gh.jobs[job_id] = NOT_SUCCEEDED[state]
+    w80.assert_holds_naming(gh.run(), name, other)
+
+
+@pytest.mark.parametrize("target", ["gate", "integrity"])
+def test_genuine_job_that_succeeded_still_merges(tmp, target):
+    gh = w80.broken(tmp, target)
+    gh.jobs[BOUND[target][1]] = {"status": "completed", "conclusion": "success"}
+    assert gh.run() == (0, ["MERGE"])
+
+
+@pytest.mark.parametrize("target", ["gate", "integrity"])
+def test_job_missing_only_its_name_holds_with_a_line_naming_the_name(tmp, target):
+    name, job_id, _, other = BOUND[target]
+    gh = w80.broken(tmp, target)
+    gh.jobs[job_id] = {"name": None}
+    code, lines = gh.run()
+    assert code == 1 and "MERGE" not in lines, (code, lines)
+    mine = [ln for ln in holds(lines) if name.lower() in ln.lower()]
+    assert mine and any("name" in ln.lower().replace(name.lower(), "") for ln in mine), lines
+    assert not any(other.lower() in ln.lower() for ln in holds(lines)), lines
+
+
+@pytest.mark.parametrize("target", ["gate", "integrity"])
+def test_job_missing_only_its_run_id_holds_with_a_line_naming_the_run_id(tmp, target):
+    name, job_id, _, other = BOUND[target]
+    gh = w80.broken(tmp, target)
+    gh.jobs[job_id] = {"run_id": None}
+    code, lines = gh.run()
+    assert code == 1 and "MERGE" not in lines, (code, lines)
+    mine = [ln.lower() for ln in holds(lines) if name.lower() in ln.lower()]
+    assert any("run_id" in ln or "run id" in ln for ln in mine), lines
+    assert not any(other.lower() in ln.lower() for ln in holds(lines)), lines
