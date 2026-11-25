@@ -424,3 +424,103 @@ def test_details_url_of_another_repository_than_the_repo_option_holds(tmp):
     gh = world(tmp, repo=OTHER, rollup=good_rollup(HERE))
     assert_holds_naming(gh.run("--repo", OTHER), GATE, "unit")
 
+
+
+# ---- D29 amendment 1: names GitHub evaluates, slashed shown names, odd YAML ----------
+
+def test_plain_job_named_by_an_expression_like_the_gate_with_a_skipped_caller_holds(tmp):
+    """`name: "${{ 'acceptance / gate' }}"` is shown as the gate check; the file cannot tell."""
+    rollup = [
+        check("Lint, types, unit tests"),
+        run_check("acceptance", HERE, GATE_RUN, "11", "SKIPPED"),
+        run_check(GATE, HERE, GATE_RUN, "14"),
+        run_check(INTEGRITY, HERE, INT_RUN, "13"),
+    ]
+    callers = [caller("acceptance", GATE_FILE, if_=GATE_IF_FALSE), good_callers()[1]]
+    fake = plain_job("gate", "\"${{ 'acceptance / gate' }}\"")
+    gh = world(tmp, rollup=rollup, callers=callers, extra_jobs=[fake])
+    assert_holds_naming(gh.run(), GATE, INTEGRITY)
+
+
+def test_plain_job_named_by_an_expression_like_exam_integrity_with_a_skipped_caller_holds(tmp):
+    rollup = [
+        check("Lint, types, unit tests"),
+        run_check("acceptance / exam", HERE, GATE_RUN, "11"),
+        run_check(GATE, HERE, GATE_RUN, "12"),
+        run_check(INTEGRITY, HERE, INT_RUN, "14"),
+    ]
+    callers = [good_callers()[0], caller("exam-integrity", INTEGRITY_FILE, if_=GATE_IF_FALSE)]
+    fake = plain_job("fake", "\"x / ${{ 'exam-integrity' }}\"")
+    gh = world(tmp, rollup=rollup, callers=callers, extra_jobs=[fake])
+    assert_holds_naming(gh.run(), "exam-integrity", GATE)
+
+
+def test_job_shown_with_a_slash_calling_a_local_workflow_with_a_skipped_caller_holds(tmp):
+    """Job `x / y` calls a local workflow whose job is `exam-integrity`: the check is shown as
+    `x / y / exam-integrity`, though the pinned caller is skipped."""
+    shown = "x / y / exam-integrity"
+    rollup = [
+        check("Lint, types, unit tests"),
+        run_check("acceptance / exam", HERE, GATE_RUN, "11"),
+        run_check(GATE, HERE, GATE_RUN, "12"),
+        run_check(shown, HERE, INT_RUN, "13"),
+    ]
+    local = "  local:\n    name: x / y\n    uses: ./.github/workflows/local.yml\n"
+    skipped = caller("exam-integrity", INTEGRITY_FILE, if_=GATE_IF_FALSE)
+    callers = [good_callers()[0], skipped, local]
+    gh = world(tmp, rollup=rollup, callers=callers)
+    assert_holds_naming(gh.run(), "exam-integrity", GATE)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "\n      path: Shashkist/factory/.github/workflows/junit-gate.yml\n",
+        "\n      - junit-gate.yml\n",
+    ],
+    ids=["mapping", "list"],
+)
+@pytest.mark.parametrize("target", ["gate", "integrity"])
+def test_job_whose_uses_is_not_a_string_holds_without_a_traceback(tmp, target, value):
+    shown = TARGETS[target][3]
+    bad = "  " + shown + ":\n    uses:" + value
+    callers = good_callers()
+    callers[0 if target == "gate" else 1] = bad
+    proc = world(tmp, callers=callers).command("merge-gate", "9", "--session", "lf-pass-1")
+    out = proc.stdout + proc.stderr
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    assert "Traceback" not in out, out
+    assert proc.returncode == 1, (proc.returncode, out)
+    assert "MERGE" not in lines, lines
+    assert holds(lines), lines
+
+
+def test_ci_yml_with_a_duplicate_job_key_holds(tmp):
+    """The same job key twice: YAML loaders keep the last one, so the file is refused."""
+    callers = good_callers()
+    callers.append(callers[0])
+    code, lines = world(tmp, callers=callers).run()
+    assert code == 1 and "MERGE" not in lines, (code, lines)
+    assert holds(lines), lines
+
+
+def test_ci_yml_with_a_duplicate_job_key_that_hides_a_skipped_caller_holds(tmp):
+    """The first `acceptance` is the pinned caller, the second (the one a loader keeps) is a
+    plain job: the file is refused rather than read one way."""
+    callers = good_callers()
+    callers.append(plain_job("acceptance"))
+    code, lines = world(tmp, callers=callers).run()
+    assert code == 1 and "MERGE" not in lines, (code, lines)
+    assert holds(lines), lines
+
+
+def test_control_real_shaped_green_pr_merges_with_expressions_elsewhere_in_ci_yml(tmp):
+    """No `${{` in any job name and no ` / ` in any shown name: nothing new fires. Expressions
+    in steps and conditions are fine."""
+    extra = (
+        "  docs:\n    name: Docs\n    runs-on: ubuntu-latest\n"
+        "    if: ${{ github.event_name == 'pull_request' }}\n"
+        "    steps:\n      - run: echo ${{ github.sha }}\n"
+    )
+    gh = world(tmp, extra_jobs=[extra])
+    assert gh.run() == (0, ["MERGE"])
