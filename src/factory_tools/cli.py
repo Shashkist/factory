@@ -73,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
     mg.add_argument("--repo", help="owner/name, when not this repository")
     mg.add_argument("--session", required=True, help="the session that must hold the claims")
     mg.add_argument("--author", help="who may give the review verdict (default: the PR author)")
+    mg.add_argument(
+        "--exam-gate",
+        default=merge_gate.EXAM_GATE,
+        help="the exam gate check, which must conclude SUCCESS (default: %(default)s)",
+    )
     mg.set_defaults(func=merge_gate.run_command)
     return parser
 

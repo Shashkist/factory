@@ -184,9 +184,9 @@ The incident tool is fetched from the Factory at the pinned commit of the workfl
 
 ## `factory-tools merge-gate`
 
-Decide whether a pull request may merge, from facts only, read-only. Prints `MERGE` (exit 0) or one `HOLD: <reason>` line per reason (exit 1). Takes the PR number, `--session NAME` and, when not this repository, `--repo owner/name`; `--author LOGIN` is who may give the review verdict (default: the PR author).
+Decide whether a pull request may merge, from facts only, read-only. Prints `MERGE` (exit 0) or one `HOLD: <reason>` line per reason (exit 1). Takes the PR number, `--session NAME` and, when not this repository, `--repo owner/name`; `--author LOGIN` is who may give the review verdict (default: the PR author); `--exam-gate NAME` renames the exam gate check (default `acceptance / gate`, exact name).
 
-It holds unless: every check passed and `exam-integrity` succeeded; the latest `Review round <k>: APPROVE at <sha>` verdict is for the current head and the review round is at most 2; at most 5 commits changed code; no commit changes `tests/acceptance/` together with code; the PR is not cross-repository; and the session holds the claim on every issue the PR closes.
+It holds unless: every check passed, `exam-integrity` succeeded and the exam gate check concluded SUCCESS (skipped, neutral, missing or any other conclusion holds, with a reason naming it; other checks may be neutral or skipped); the latest `Review round <k>: APPROVE at <sha>` verdict is for the current head and the review round is at most 2; at most 5 commits changed code; no commit changes `tests/acceptance/` together with code; the PR is not cross-repository; and the session holds the claim on every issue the PR closes.
 
 ```
 factory-tools merge-gate 9 --repo owner/name --session lf-a1b2

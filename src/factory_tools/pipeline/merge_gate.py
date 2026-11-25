@@ -15,6 +15,7 @@ from factory_tools.ci.exam_integrity import _is_code, _is_exam
 MAX_REVIEW_ROUNDS = 2
 MAX_CI_ROUNDS = 5
 PASSED = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+EXAM_GATE = "acceptance / gate"
 VERDICT = re.compile(r"^Review round (\d+): (APPROVE|CHANGES) at ([0-9a-fA-F]{7,40})\s*$")
 CLOSES = re.compile(r"^\s*closes\s+#(\d+)\s*$", re.IGNORECASE | re.MULTILINE)
 
@@ -24,7 +25,7 @@ def _is_exam_integrity(name: str) -> bool:
     return name == "exam-integrity" or name.endswith(" / exam-integrity")
 
 
-def _check_reasons(checks: list[dict[str, Any]]) -> list[str]:
+def _check_reasons(checks: list[dict[str, Any]], exam_gate: str = EXAM_GATE) -> list[str]:
     if not checks:
         return ["no checks have run on this PR"]
     reasons = []
@@ -33,10 +34,14 @@ def _check_reasons(checks: list[dict[str, Any]]) -> list[str]:
         state = (c.get("conclusion") or c.get("state") or "").upper()
         if c.get("status", "COMPLETED") != "COMPLETED" or state in ("", "PENDING", "EXPECTED"):
             reasons.append(f"{name} is pending")
-        elif state not in PASSED or (_is_exam_integrity(name) and state != "SUCCESS"):
+        elif state not in PASSED or (
+            (_is_exam_integrity(name) or name == exam_gate) and state != "SUCCESS"
+        ):
             reasons.append(f"{name} ended in {state.lower()}")
     if not any(_is_exam_integrity(c.get("name") or c.get("context") or "") for c in checks):
         reasons.append("exam-integrity has not run")
+    if not any((c.get("name") or c.get("context")) == exam_gate for c in checks):
+        reasons.append(f"{exam_gate} has not run")
     return reasons
 
 
@@ -113,6 +118,7 @@ def decide(
     session: str,
     repo: str | None = None,
     author: str | None = None,
+    exam_gate: str = EXAM_GATE,
     run: claims.Run = claims._run,
 ) -> list[str]:
     """The HOLD reasons for a pull request; empty means MERGE."""
@@ -124,7 +130,7 @@ def decide(
     pr = json.loads(gh(["pr", "view", pr_number, "--json", fields]))
     head = pr["headRefOid"].lower()
     author = author or pr["author"]["login"]
-    reasons = _check_reasons(pr.get("statusCheckRollup") or [])
+    reasons = _check_reasons(pr.get("statusCheckRollup") or [], exam_gate)
     if pr.get("isCrossRepository") is True:
         reasons.append("cross-repository pull request")
 
@@ -140,7 +146,7 @@ def decide(
 
 
 def run_command(args: Any) -> int:
-    reasons = decide(args.pr, args.session, args.repo, args.author)
+    reasons = decide(args.pr, args.session, args.repo, args.author, args.exam_gate)
     for r in reasons:
         print("HOLD: " + r)
     if not reasons:

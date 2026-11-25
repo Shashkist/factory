@@ -10,14 +10,31 @@ SHORT = "a1b2c3d"
 EXAM = {"name": "exam-integrity", "conclusion": "SUCCESS"}
 
 
+GATE = {"name": "acceptance / gate", "conclusion": "SUCCESS"}
+
+
 def test_check_reasons_pass_and_hold():
-    assert merge_gate._check_reasons([{"name": "u", "conclusion": "NEUTRAL"}, EXAM]) == []
+    assert merge_gate._check_reasons([{"name": "u", "conclusion": "NEUTRAL"}, EXAM, GATE]) == []
     assert merge_gate._check_reasons([]) == ["no checks have run on this PR"]
-    assert merge_gate._check_reasons([EXAM, {"name": "u", "status": "QUEUED"}]) == [
+    assert merge_gate._check_reasons([EXAM, GATE, {"name": "u", "status": "QUEUED"}]) == [
         "u is pending"
     ]
-    skipped = [{"name": "exam-integrity", "conclusion": "SKIPPED"}]
+    skipped = [{"name": "exam-integrity", "conclusion": "SKIPPED"}, GATE]
     assert merge_gate._check_reasons(skipped) == ["exam-integrity ended in skipped"]
+
+
+@pytest.mark.parametrize("state", ["SKIPPED", "NEUTRAL", "FAILURE"])
+def test_exam_gate_must_succeed(state):
+    gate = {"name": "acceptance / gate", "conclusion": state}
+    expected = [f"acceptance / gate ended in {state.lower()}"]
+    assert merge_gate._check_reasons([EXAM, gate]) == expected
+
+
+def test_exam_gate_missing_holds_and_option_renames_it():
+    assert merge_gate._check_reasons([EXAM]) == ["acceptance / gate has not run"]
+    other = {"name": "ci / gate", "conclusion": "SUCCESS"}
+    assert merge_gate._check_reasons([EXAM, other], "ci / gate") == []
+    assert merge_gate._check_reasons([EXAM, GATE], "ci / gate") == ["ci / gate has not run"]
 
 
 def test_verdicts_use_first_line_and_author_only():
@@ -70,8 +87,8 @@ def test_commit_files_merges_concatenated_pages_and_gate_holds_on_page_two():
 
 @pytest.mark.parametrize("name", ["exam-integrity", "exam-integrity / exam-integrity"])
 def test_exam_integrity_names_count(name):
-    assert merge_gate._check_reasons([{"name": name, "conclusion": "SUCCESS"}]) == []
-    skipped = [{"name": name, "conclusion": "SKIPPED"}]
+    assert merge_gate._check_reasons([{"name": name, "conclusion": "SUCCESS"}, GATE]) == []
+    skipped = [{"name": name, "conclusion": "SKIPPED"}, GATE]
     assert merge_gate._check_reasons(skipped) == [f"{name} ended in skipped"]
 
 
@@ -79,5 +96,5 @@ def test_exam_integrity_names_count(name):
     "name", ["exam-integrity-lint", "exam-integrity / other", "x / exam-integrity-2"]
 )
 def test_exam_integrity_lookalikes_do_not_count(name):
-    reasons = merge_gate._check_reasons([{"name": name, "conclusion": "SUCCESS"}])
+    reasons = merge_gate._check_reasons([{"name": name, "conclusion": "SUCCESS"}, GATE])
     assert reasons == ["exam-integrity has not run"]

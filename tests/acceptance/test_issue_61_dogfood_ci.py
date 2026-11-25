@@ -85,9 +85,10 @@ def test_acceptance_call_keeps_the_plugin_autoload_defence_on():
 
 def test_exam_integrity_call_does_not_steer_the_checked_range():
     # base-ref/head-sha-like inputs could make the checked range empty ("checked 0 commits: ok").
-    # Only the path inputs planned in #65 may ever appear.
+    # #76: this repository passes no inputs at all. exam-paths/ci-paths (#65) would let a
+    # ci.yml-only change point the check at an empty folder.
     w = job("exam-integrity").get("with") or {}
-    assert set(w) <= {"exam-paths", "ci-paths"}, w
+    assert set(w) == set(), w
 
 
 def test_acceptance_job_has_no_condition_that_could_skip_it():
