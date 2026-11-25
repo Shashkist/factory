@@ -109,3 +109,23 @@ def test_non_ascii_exam_path_is_classified(tmp_path: Path, monkeypatch: pytest.M
     git("commit", "-q", "-m", "both")
     monkeypatch.chdir(tmp_path)
     assert exam_integrity.main("HEAD~1", "HEAD", False) == 1
+
+
+def test_globs_replace_the_defaults_and_cross_slashes() -> None:
+    nested = "labs/m/tests/acceptance/a/b.py"
+    assert check([[nested, CODE]], exam_paths=["labs/*/tests/acceptance/**"])
+    assert check([[nested, CODE]]) == []
+    assert check([[EXAM], [CODE]], exam_paths=["labs/**"]) == []
+
+
+def test_ci_paths_replace_the_default_surface() -> None:
+    assert check([[EXAM], [CI]], ci_paths=["ci/**"]) == []
+    assert check([[EXAM], ["ci/run.sh"]], ci_paths=["ci/**"])
+
+
+def test_parse_takes_several_globs_per_option() -> None:
+    argv = ["b", "h", "--exam-paths", "x/**", "y", "--bootstrap", "--ci-paths", "z"]
+    a = exam_integrity._parse(argv)
+    assert (a.base, a.head, a.bootstrap) == ("b", "h", True)
+    assert (a.exam_paths, a.ci_paths) == (["x/**", "y"], ["z"])
+    assert exam_integrity._parse(["b", "h"]).exam_paths is None
