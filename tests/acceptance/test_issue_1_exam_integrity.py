@@ -180,3 +180,4 @@ def test_module_file_runs_as_a_plain_script(repo: Repo) -> None:
         text=True,
     )
     assert failing.returncode != 0, failing.stdout + failing.stderr
+# scratch check for #61, do not merge
