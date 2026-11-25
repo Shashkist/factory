@@ -387,15 +387,29 @@ def sweep_leftovers(main_root: Path, known: set[Path], dry_run: bool) -> None:
                 say("SKIPPED", d, "busy, not removed: " + str(e)[:80])
 
 
+def adding_now(main_root: Path) -> bool:
+    """True when an admin dir has no `gitdir` file yet: git is adding a worktree right now.
+
+    `git worktree prune` would delete that admin dir, so the prune is skipped then.
+    """
+    admin_root = main_root / ".git" / "worktrees"
+    try:
+        return admin_root.is_dir() and any(
+            admin.is_dir() and not (admin / "gitdir").is_file() for admin in admin_root.iterdir()
+        )
+    except OSError:
+        return True
+
+
 def run_prune(args: argparse.Namespace) -> int:
     pass_start = parse_iso(args.pass_start) if args.pass_start else None
     gh = claims.scoped(claims._run, args.repo)
     here = Path(git(".", "rev-parse", "--show-toplevel").stdout.strip()).resolve()
-    if not args.dry_run:
-        # not a bare prune: an admin dir git is creating right now has no gitdir file yet
-        git(here, "worktree", "prune", "--expire", "90.minutes.ago")
     trees = parse_worktrees(git(here, "worktree", "list", "--porcelain").stdout)
     main_root = Path(trees[0]["worktree"]).resolve()
+    if not args.dry_run and not adding_now(main_root):
+        git(here, "worktree", "prune")
+        trees = parse_worktrees(git(here, "worktree", "list", "--porcelain").stdout)
     for wt in trees[1:]:
         try:
             judge(wt, main_root, here, args, pass_start, gh)

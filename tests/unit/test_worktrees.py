@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from factory_tools import worktrees as wt
 
 NOW = 1_000_000.0
@@ -54,6 +56,16 @@ def test_parse_worktrees_strips_the_branch_prefix_and_keeps_locked() -> None:
     trees = wt.parse_worktrees(text)
     assert [t["branch"] for t in trees] == ["main", ""]
     assert trees[1]["locked"] == "on usb"
+
+
+def test_adding_now_sees_an_admin_dir_without_gitdir(tmp_path: Path) -> None:
+    admin_root = tmp_path / ".git" / "worktrees"
+    (admin_root / "done").mkdir(parents=True)
+    (admin_root / "done" / "gitdir").write_text("x\n")
+    assert not wt.adding_now(tmp_path)
+    (admin_root / "new").mkdir()
+    assert wt.adding_now(tmp_path)
+    assert not wt.adding_now(tmp_path / "nowhere")
 
 
 def test_list_names_caps_long_lists() -> None:
