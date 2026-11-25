@@ -385,6 +385,7 @@ function workerCard(w) {
 // ---- Lanes: one pipeline per task in flight, click a station for its sub-steps and agents. ----
 var snapPrs = null;
 var laneOpen = Object.create(null);   // issue -> station the viewer expanded (kept across polls)
+var LANE_DETAILS = 3;   // sub-step details a lane shows
 var LANE_MARK = { done: "✓", active: "●", failed: "✗", waiting: "⏸", pending: "" };
 var ROLE_STATION = { researcher: "plan", planner: "plan", "exam-writer": "exam", implementer: "build", reviewer: "check" };
 var foldOpen = Object.create(null);   // collapsible section -> open, kept across polls
@@ -397,6 +398,12 @@ function crewRef(title, d) {   // "#12" is the host's issue; "factory#1" names a
   for (var j = 0; j < repos.length; j++) {
     if (!repos[j]) continue;
     if (short && shortRepo(repos[j]).toLowerCase() === short) return { repo: repos[j], issue: issue };
+  }
+  for (var k = 0; k < repos.length; k++) {   // else the short name right before the reference: "factory #53", "Factory PR #53", "factory issue #53"
+    var nm = shortRepo(repos[k] || "").replace(/[^\w]/g, "\\$&");
+    if (!nm) continue;
+    var at = new RegExp("(^|[^\\w-])" + nm + "(\\s+(?:PR|issue))?\\s*#(\\d+)", "i").exec(S(title));
+    if (at && Number(at[3]) === issue) return { repo: repos[k], issue: issue };
   }
   return { repo: "", issue: issue };   // no prefix, or "PR#547": not a repository name, so the host's issue
 }
@@ -434,7 +441,9 @@ function stepRef(a, s) {   // the issue a step belongs to (its own, else its pre
 var hostRepo = "";   // the first repository of the snapshot: a lane with repo "" belongs to it
 function canonRepo(repo) { return repo || hostRepo; }
 function laneKey(repo, n) { repo = canonRepo(repo); return repo ? repo + "#" + n : String(n); }
-function laneLabel(repo, n) { return "#" + n; }   // a view shows one repository: the number is enough
+function laneLabel(repo, n) {   // a view shows one repository: the number is enough; with no view the repository stays named
+  return (selRepo || !repo ? "" : shortRepo(repo)) + "#" + n;
+}
 
 function latestKeys(a) {   // the lane keys holding the agent's latest sub-steps (same-second steps tie), in step order
   var subs = arr(a.substeps), max = 0, out = [];
@@ -592,8 +601,9 @@ function renderLanes(d, rerender) {
         S(l.now.s.station), l.now.open ? dur(l.now.s.started) : ago(l.now.s.at)]), "muted"));
       lane.appendChild(nowLine);
     }
-    l.steps.filter(function (x) { return S(x.s.detail); })
+    l.steps.filter(function (x) { return S(x.s.detail) && x.s.station !== laneOpen[l.key]; })   // the open panel lists its own
       .sort(function (a, b) { return S(a.s.started) < S(b.s.started) ? -1 : 1; })
+      .slice(-LANE_DETAILS)
       .forEach(function (x) { lane.appendChild(el("div", S(x.s.detail), "lane-step-detail muted")); });
     l.crew.filter(function (n) { return n.state === "busy" || n.state === "thinking"; })
       .forEach(function (n) { lane.appendChild(agentLine(n)); });
@@ -745,8 +755,8 @@ function renderLive(full) {
   var agents = arr(d.agents);
   var ownWorkers = Object.create(null);
   var loose = [];
-  arr(d.workers).forEach(function (w) {
-    var same = agents.filter(function (a) { return a.state === "running" && a.role === w.role; });
+  arr(full.workers).forEach(function (w) {   // matched on the full live data: workers carry no repository
+    var same = arr(full.agents).filter(function (a) { return a.state === "running" && a.role === w.role; });
     if (same.length === 1) (ownWorkers[same[0].id] = ownWorkers[same[0].id] || []).push(w);
     else loose.push(w);
   });
