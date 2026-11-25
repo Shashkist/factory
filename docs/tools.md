@@ -193,7 +193,9 @@ The exam gate check and every `<caller> / exam-integrity` check count as SUCCESS
 1. it is a check run, never a commit status (a bare `exam-integrity` has no caller part and never counts);
 2. its details URL is a job of a workflow run of the PR's repository (`https://github.com/<repo>/actions/runs/<id>/job/<id>`) whose `path` is `.github/workflows/ci.yml` and whose `head_sha` is the PR head;
 3. the run's `referenced_workflows` lists `<workflows repo>/.github/workflows/junit-gate.yml@<sha>` (respectively `exam-integrity.yml`) with a `sha` on the workflows repository's `main` (`compare/main...<sha>` is `behind` or `identical`);
-4. the head's `ci.yml` has exactly one job shown (its `name:`, else its id) under the part of the check name before ` / `, its `uses:` is exactly that referenced `path@sha`, and no job is shown under the full check name.
+4. the head's `ci.yml` has exactly one job shown (its `name:`, else its id) under the part of the check name before ` / `, its `uses:` is exactly that referenced `path@sha`, and no job is shown under the full check name; a `uses:` that is not a string holds. The file is read in its raw form and refused when a YAML key repeats.
+
+The line names the first failed condition in this order. Because GitHub evaluates expressions in a job's `name:` and shows a job that calls a local workflow as `<caller> / <called job>`, the file itself also holds, with one line per job, when a job's `name:` contains `${{` or a job's shown name contains ` / ` (D29 amendment 1).
 
 The gate reads each run, the head's `ci.yml` and each compare once per PR. Without `--repo` the run is read both in the checkout's repository and under the repository its URL names; run ids are unique on GitHub, so both succeed only when the URL names the PR's repository.
 
