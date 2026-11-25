@@ -27,7 +27,7 @@ jobs:
       - run: uv run pytest tests/unit -q
 
   # The pin is a full SHA of main, so a PR runs main's judge, never its own (D25).
-  # Dependabot keeps the pin current.
+  # Move the pin with a PR when the judge on main changes.
   acceptance:
     uses: Shashkist/factory/.github/workflows/junit-gate.yml@34f9188d89b057f5cf753b3112e312a6689c88b2
     with:
@@ -35,7 +35,7 @@ jobs:
       # conftest/config picked up from above tests/.
       test-command: uv run pytest -c pytest.ini tests/acceptance -q -o addopts="" --confcutdir=tests --junitxml=acceptance.xml
 
-  # Pinned to a full SHA of main for the same reason (D25); Dependabot keeps it current.
+  # Pinned to a full SHA of main for the same reason (D25).
   exam-integrity:
     if: github.event_name == 'pull_request'
     uses: Shashkist/factory/.github/workflows/exam-integrity.yml@34f9188d89b057f5cf753b3112e312a6689c88b2
