@@ -292,3 +292,11 @@ in force · factory · 2026-11-25 · revertible
 **Why.** Issue #61 criteria 2 and 3; a reusable-workflow check is always named `<caller job> / <called job>`, so no caller name keeps the bare `exam-integrity`.
 **Alternatives.** Keep the inline jobs as a fallback (two judges to keep in step); a local `uses: ./...` call (runs the PR's own judge, D22); require the exact new name only (breaks every caller that names its job differently).
 **Revert.** Restore the inline jobs from 34f9188's `ci.yml` and the #1 cases from before the exam commit; the gates' suffix match can stay (harmless).
+
+## D26 · #61 ships as three PRs, because one PR may not change the exam and `ci.yml` together
+in force · factory · 2026-11-25 · revertible
+
+**Decision.** Amends D25 point 2. Exam integrity refuses a PR that changes the exam together with the CI surface (`ci.yml`), and the #1 cases pin today's inline `ci.yml`, so #61 cannot ship as one PR. It ships as three, each `Part of #61` except the last: (A) exam only: the three #1 cases named in D25 accept either today's inline form or the SHA-pinned reusable calls (a transitional loosening for the window between A and C, named here); (B) code and CI only: `ci.yml` calls the reusable workflows, the merge gate counts `<caller> / exam-integrity` (no exam change, so no exam-integrity conflict); (C) exam only, `Closes #61`: the #61 exam (`test_issue_61_dogfood_ci.py`) and the #1 cases in their final D25 form, which only the reusable form passes. The first build (`f/61-dogfood-reusable-ci`, exam 929c184 and code ff57dac/a2cff55) is the source: B and C reuse its commits.
+**Why.** The rule is right: a PR must not move the exam and the CI that runs it at the same time. Splitting keeps every PR within it, and after C the exam is as strict as D25 says.
+**Alternatives.** Run with `--bootstrap` (not possible: the reusable judge has no bypass, and it would weaken the rule); keep the old strings in `ci.yml` comments so the old cases pass (games the exam); drop the three #1 cases in A (looser than accept-either for the window).
+**Revert.** Merge C's cases back into A's form, or restore 34f9188's `ci.yml` and #1 cases.
