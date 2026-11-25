@@ -14,6 +14,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -270,17 +271,32 @@ def add_counts(total: dict[str, Any], one: dict[str, Any]) -> None:
             total[key][k] = total[key].get(k, 0) + v
 
 
-def build(sources: list[Source], now: datetime) -> dict[str, Any]:
-    per_repo = [(s, s.issues()) for s in sources]
-    claim: dict[str, Any] | None = None
+def first_claim(
+    per_repo: list[tuple[Source, list[dict[str, Any]]]],
+    comments: Callable[[Source, int], list[dict[str, Any]]] | None = None,
+) -> dict[str, Any] | None:
+    """The first live claim: in-progress issues before in-review, repositories in order."""
     for status in ("in-progress", "in-review"):
         for src, issues in per_repo:
             for issue in issues:
                 if issue["state"] == "OPEN" and status in label_values(issue, "status:"):
-                    found = current_claim(issue["number"], src.comments(issue["number"]))
-                    claim = claim or (found and {"repo": src.repo, **found})
-        if claim:
-            break
+                    fetch = comments or Source.comments
+                    found = current_claim(issue["number"], fetch(src, issue["number"]))
+                    if found:
+                        return {"repo": src.repo, **found}
+    return None
+
+
+def build(sources: list[Source], now: datetime) -> dict[str, Any]:
+    per_repo = [(s, s.issues()) for s in sources]
+    fetched: dict[tuple[str, int], list[dict[str, Any]]] = {}
+
+    def comments(src: Source, number: int) -> list[dict[str, Any]]:   # one fetch per issue
+        if (src.repo, number) not in fetched:
+            fetched[(src.repo, number)] = src.comments(number)
+        return fetched[(src.repo, number)]
+
+    claim = first_claim(per_repo, comments)
     totals: dict[str, Any] = {
         "open": 0, "closed": 0, "by_status": {}, "by_phase": {}, "by_priority": {},
     }
@@ -295,7 +311,12 @@ def build(sources: list[Source], now: datetime) -> dict[str, Any]:
     owner_open: list[dict[str, Any]] = []
     for src, issues in per_repo:
         counts = count_issues(issues)
-        repos[src.repo] = {"issues": counts}
+        own = first_claim([(src, issues)], comments)
+        repos[src.repo] = {
+            "issues": counts,
+            "claim": own and {k: v for k, v in own.items() if k != "repo"},
+            "throughput": throughput(issues, now),
+        }
         add_counts(totals, counts)
         all_issues += issues
         ready += tag(src.repo, queue(issues))

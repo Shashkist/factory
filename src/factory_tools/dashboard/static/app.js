@@ -108,70 +108,84 @@ function showAge() {
 
 function shortRepo(repo) { return S(repo).split("/").pop(); }
 
-function newestPerRepo(items, n) {   // the last n items of each repository, newest first, repositories in snapshot order
-  var order = [], by = Object.create(null);
-  items.forEach(function (i) {
-    var r = S(i.repo);
-    if (!by[r]) { by[r] = []; order.push(r); }
-    by[r].push(i);
+var snap = null;
+var selRepo = "";   // the repository whose view is shown: from #/<short name>, else the host (the first repository)
+
+function pickRepo(s) {
+  var keys = Object.keys(s.repos || {});
+  var want = "";
+  try { want = decodeURIComponent((/^#\/(.*)$/.exec(location.hash) || [])[1] || ""); } catch (e) { /* a link cut mid-escape: open the host */ }
+  return keys.filter(function (r) { return shortRepo(r) === want; })[0] || keys[0] || "";
+}
+
+function mine(items) {
+  return arr(items).filter(function (i) { return canonRepo(S(i.repo)) === selRepo; });
+}
+
+function renderTabs(s) {
+  var nav = document.getElementById("repo-tabs");
+  nav.textContent = "";
+  Object.keys(s.repos || {}).forEach(function (repo) {
+    var a = el("a", shortRepo(repo) + " " + ((s.repos[repo].issues || {}).open || 0), repo === selRepo ? "tab sel" : "tab");
+    a.href = "#/" + encodeURIComponent(shortRepo(repo));
+    if (repo === selRepo) a.setAttribute("aria-current", "page");
+    nav.appendChild(a);
   });
-  var out = [];
-  order.forEach(function (r) { out = out.concat(by[r].slice(-n).reverse()); });
-  return out;
 }
 
 function render(s) {
+  snap = s;
   lastGenerated = s.generated_at;
   hostRepo = Object.keys(s.repos || {})[0] || "";
+  selRepo = pickRepo(s);
+  var cur = (s.repos || {})[selRepo] || { issues: s.issues, claim: s.claim, throughput: s.throughput };
+  cur.issues = cur.issues || { open: 0, closed: 0, by_status: {} };
+  renderTabs(s);
   showAge();
 
   // pipeline
   var stations = document.querySelectorAll("#stations li");
   var claimLine = document.getElementById("claim");
   stations.forEach(function (li) { li.classList.remove("active"); });
-  if (s.claim) {
-    var st = stationFor(s.claim.step);
+  var claim = cur.claim;
+  if (claim) {
+    var st = stationFor(claim.step);
     stations.forEach(function (li) {
       if (li.dataset.station === st) li.classList.add("active");
     });
     claimLine.textContent = "";
-    claimLine.appendChild(el("b", laneLabel(S(s.claim.repo), s.claim.issue)));
+    claimLine.appendChild(el("b", laneLabel("", claim.issue)));
     claimLine.appendChild(document.createTextNode(
-      " " + (s.claim.step || "") + " (" + (s.claim.session || "?") + ", " +
-      (s.claim.branch || "no branch") + ", heartbeat " + ago(s.claim.heartbeat) + ")"));
+      " " + (claim.step || "") + " (" + (claim.session || "?") + ", " +
+      (claim.branch || "no branch") + ", heartbeat " + ago(claim.heartbeat) + ")"));
   } else {
     claimLine.textContent = "No issue is being worked on.";
   }
 
   // queue
-  var by = s.issues.by_status || {};
+  var by = cur.issues.by_status || {};
   document.getElementById("counts").textContent =
-    s.issues.open + " open, " + s.issues.closed + " closed. Ready " + (by.ready || 0) +
+    cur.issues.open + " open, " + cur.issues.closed + " closed. Ready " + (by.ready || 0) +
     ", blocked " + (by.blocked || 0) + ", needs owner " + (by["needs-owner"] || 0) + ".";
-  fill("repo-counts", Object.keys(s.repos || {}), function (li, repo) {
-    var c = s.repos[repo].issues;
-    li.appendChild(el("b", shortRepo(repo) + ": "));
-    li.appendChild(document.createTextNode(c.open + " open, " + c.closed + " closed"));
-  }, "No repositories.");
-  fill("queue", s.queue, function (li, q) {
+  fill("queue", mine(s.queue), function (li, q) {
     li.appendChild(el("span", q.priority, "tag"));
     li.appendChild(document.createTextNode(" "));
-    li.appendChild(link(q.url, laneLabel(S(q.repo), q.number) + " " + q.title));
+    li.appendChild(link(q.url, laneLabel("", q.number) + " " + q.title));
   }, "No ready issues.");
 
-  fill("open-prs", s.prs.open, function (li, p) {
-    li.appendChild(link(p.url, laneLabel(S(p.repo), p.number) + " " + p.title));
+  fill("open-prs", mine(s.prs.open), function (li, p) {
+    li.appendChild(link(p.url, laneLabel("", p.number) + " " + p.title));
   }, "No open pull requests.");
-  fill("merged", s.prs.merged.slice(0, 8), function (li, p) {
-    li.appendChild(link(p.url, laneLabel(S(p.repo), p.number) + " " + p.title));
+  fill("merged", mine(s.prs.merged).slice(0, 8), function (li, p) {
+    li.appendChild(link(p.url, laneLabel("", p.number) + " " + p.title));
     li.appendChild(el("div", ago(p.merged_at), "muted"));
   }, "Nothing merged yet.");
-  fill("owner", s.owner_open, function (li, o) {
-    li.appendChild(el("span", shortRepo(o.repo) + " " + o.id, "tag"));
+  fill("owner", mine(s.owner_open), function (li, o) {
+    li.appendChild(el("span", o.id, "tag"));
     li.appendChild(document.createTextNode(o.title));
   }, "Nothing is waiting for the owner.");
-  fill("decisions", newestPerRepo(s.decisions || [], 6), function (li, d) {
-    li.appendChild(el("span", shortRepo(d.repo) + " " + d.id, "tag"));
+  fill("decisions", mine(s.decisions).slice(-6).reverse(), function (li, d) {
+    li.appendChild(el("span", d.id, "tag"));
     li.appendChild(document.createTextNode(d.title));
   }, "No decisions recorded.");
 
@@ -179,12 +193,12 @@ function render(s) {
   var runs = s.runs || {};
   var health = document.getElementById("health");
   health.textContent = "";
-  Object.keys(runs).forEach(function (repo) {   // runs are nested by repository, then workflow
+  [selRepo].filter(function (r) { return runs[r]; }).forEach(function (repo) {   // runs are nested by repository, then workflow
     var names = ["CI", "Deploy", "Smoke"].filter(function (n) { return runs[repo][n]; });
     if (!names.length) names = [""];
     names.forEach(function (name) {
       var li = el("li");
-      runLine(li, (shortRepo(repo) + " " + name).trim(), runs[repo][name]);
+      runLine(li, name || "CI", runs[repo][name]);
       health.appendChild(li);
     });
   });
@@ -199,9 +213,13 @@ function render(s) {
   });
 
   // throughput
-  var t = s.throughput;
+  var t = cur.throughput;
   var spark = document.getElementById("spark");
   spark.textContent = "";
+  if (!t || !arr(t.closed_per_day).length) {
+    document.getElementById("throughput").textContent = "No throughput data.";
+    return;
+  }
   spark.appendChild(sparkline(t.closed_per_day));
   document.getElementById("throughput").textContent =
     "Closed per day, last 14 days. Median lead time " +
@@ -371,18 +389,16 @@ var LANE_MARK = { done: "✓", active: "●", failed: "✗", waiting: "⏸", pen
 var ROLE_STATION = { researcher: "plan", planner: "plan", "exam-writer": "exam", implementer: "build", reviewer: "check" };
 var foldOpen = Object.create(null);   // collapsible section -> open, kept across polls
 
-function crewRef(title, d) {   // "#12" is this repository's issue; "factory#1" names a repository present in the snapshot
+function crewRef(title, d) {   // "#12" is the host's issue; "factory#1" names a repository present in the snapshot
   var m = /([\w.-]+)?#(\d+)/.exec(S(title));
   if (!m) return null;
   var issue = Number(m[2]), short = (m[1] || "").toLowerCase();
-  if (!short || short === "learning_factory") return { repo: "", issue: issue };
-  if (short !== "factory") return { repo: "", issue: issue };   // "PR#547": not a repository name, so this repository's issue
-  var issues = arr(d.issues);
-  for (var j = 0; j < issues.length; j++) {
-    var repo = S(issues[j].repo);
-    if (repo && repo.split("/").pop().toLowerCase() === short) return { repo: repo, issue: issue };
+  var repos = Object.keys((snap && snap.repos) || {}).concat(arr(d && d.issues).map(function (i) { return S(i.repo); }));
+  for (var j = 0; j < repos.length; j++) {
+    if (!repos[j]) continue;
+    if (short && shortRepo(repos[j]).toLowerCase() === short) return { repo: repos[j], issue: issue };
   }
-  return null;
+  return { repo: "", issue: issue };   // no prefix, or "PR#547": not a repository name, so the host's issue
 }
 
 function prFor(issue, repo) {
@@ -418,7 +434,7 @@ function stepRef(a, s) {   // the issue a step belongs to (its own, else its pre
 var hostRepo = "";   // the first repository of the snapshot: a lane with repo "" belongs to it
 function canonRepo(repo) { return repo || hostRepo; }
 function laneKey(repo, n) { repo = canonRepo(repo); return repo ? repo + "#" + n : String(n); }
-function laneLabel(repo, n) { repo = canonRepo(repo); return (repo ? repo.split("/").pop() : "") + "#" + n; }   // short name only, never the owner
+function laneLabel(repo, n) { return "#" + n; }   // a view shows one repository: the number is enough
 
 function latestKeys(a) {   // the lane keys holding the agent's latest sub-steps (same-second steps tie), in step order
   var subs = arr(a.substeps), max = 0, out = [];
@@ -576,6 +592,9 @@ function renderLanes(d, rerender) {
         S(l.now.s.station), l.now.open ? dur(l.now.s.started) : ago(l.now.s.at)]), "muted"));
       lane.appendChild(nowLine);
     }
+    l.steps.filter(function (x) { return S(x.s.detail); })
+      .sort(function (a, b) { return S(a.s.started) < S(b.s.started) ? -1 : 1; })
+      .forEach(function (x) { lane.appendChild(el("div", S(x.s.detail), "lane-step-detail muted")); });
     l.crew.filter(function (n) { return n.state === "busy" || n.state === "thinking"; })
       .forEach(function (n) { lane.appendChild(agentLine(n)); });
     if (laneOpen[l.key]) lane.appendChild(laneDetail(l, laneOpen[l.key]));
@@ -660,7 +679,45 @@ function liveAgeText(d) {
   return a ? " · " + (quiet(d) ? "idle, last check " : "") + a : "";
 }
 
-function renderLive(d) {
+function showRunner(d) {
+  var r = document.getElementById("runner");
+  if (r) r.textContent = "Runner: " + runnerText(d.runner || {}) + liveAgeText(d);
+}
+
+function inView(d) {   // live.json narrowed to the selected repository (the runner and the log are shared)
+  if (!selRepo) return d;
+  var view = {};
+  Object.keys(d).forEach(function (k) { view[k] = d[k]; });
+  view.issues = mine(d.issues);
+  view.agents = [];
+  arr(d.agents).forEach(function (a) {   // keep each agent's steps of this repository only
+    var subs = arr(a.substeps);
+    var own = subs.filter(function (x) {
+      var r = stepRef(a, x);
+      return !(Number(r.issue) > 0) || canonRepo(r.repo) === selRepo;
+    });
+    if (subs.length && !own.length) return;
+    var copy = {};
+    Object.keys(a).forEach(function (k) { copy[k] = a[k]; });
+    copy.substeps = own;
+    view.agents.push(copy);
+  });
+  view.log = arr(d.log).filter(function (e) { return !(Number(e.issue) > 0) || canonRepo(S(e.repo)) === selRepo; });
+  view.crew = arr(d.crew).map(function prune(n) {   // d: the full live data
+    var c = {};
+    Object.keys(n).forEach(function (k) { c[k] = n[k]; });
+    c.children = arr(n.children).filter(function (k) {
+      var r = crewRef(k.title, d);
+      return !r || canonRepo(r.repo) === selRepo;
+    }).map(prune);
+    return c;
+  });
+  return view;
+}
+
+function renderLive(full) {
+  showRunner(full);
+  var d = inView(full);
   var titles = Object.create(null);
   var box = el("div", null, "live-box");
   var runner = el("div", runnerText(d.runner || {}), "live-runner");
@@ -669,7 +726,7 @@ function renderLive(d) {
   runner.appendChild(age);
   box.appendChild(runner);
 
-  box.appendChild(renderLanes(d, function () { renderLive(d); }));
+  box.appendChild(renderLanes(d, function () { renderLive(full); }));
 
   var line = el("div", null, "live-line");
   var at = {};
@@ -686,14 +743,14 @@ function renderLive(d) {
   });
   // Workers carry no issue: one running agent with the same role owns the worker, else it goes in the row.
   var agents = arr(d.agents);
-  var mine = Object.create(null);
+  var ownWorkers = Object.create(null);
   var loose = [];
   arr(d.workers).forEach(function (w) {
     var same = agents.filter(function (a) { return a.state === "running" && a.role === w.role; });
-    if (same.length === 1) (mine[same[0].id] = mine[same[0].id] || []).push(w);
+    if (same.length === 1) (ownWorkers[same[0].id] = ownWorkers[same[0].id] || []).push(w);
     else loose.push(w);
   });
-  agents.forEach(function (a) { station(a.station).appendChild(agentCard(a, titles, mine[a.id] || [], d.generated_at)); });
+  agents.forEach(function (a) { station(a.station).appendChild(agentCard(a, titles, ownWorkers[a.id] || [], d.generated_at)); });
   var stationsBox = el("div");
   stationsBox.appendChild(line);
   if (loose.length) {
@@ -725,6 +782,7 @@ function renderLive(d) {
 function showOffline() {
   var age = document.getElementById("live-age");
   if (age && lastLive) age.textContent = liveAgeText(lastLive);
+  if (lastLive) showRunner(lastLive);
   var t = lastLive ? Date.parse(lastLive.generated_at) : NaN;
   // A fresh node every poll: the exam harness's ser() keeps attrs by reference, so a toggled node
   // would show its last state in every step.
@@ -764,6 +822,12 @@ function pollLive() {
       showAge();
     });
 }
+
+window.addEventListener("hashchange", function () {
+  if (!snap) return;
+  render(snap);
+  if (lastLive) renderLive(lastLive);
+});
 
 load();
 pollLive();

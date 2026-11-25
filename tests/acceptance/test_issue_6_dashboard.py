@@ -479,38 +479,70 @@ def assert_tagged(rows: list[str], expected: list[tuple[str, int]]):
             assert "factory" not in w, f"wrong repository tag in {row!r}"
 
 
-def test_c3_every_queue_row_shows_its_repository(tmp_path):
-    step = run_page(tmp_path, snapshot_for_page(), live_for_page())
+# The #45 per-repository view replaces the one page that mixed both repositories (D19 amendment 1): each
+# repository is opened by its address "#/<short>" and shows only its own rows, without the repository prefix.
+ROWS_OF = {
+    LF: {"queue": [(7, "LF seven ready")], "lanes": [(7, "LF seven lane")]},
+    FA: {"queue": [(7, "Factory seven ready"), (8, "Factory eight ready")],
+         "lanes": [(7, "Factory seven lane"), (6, "Factory six lane")]},
+}
+
+
+def open_repo_view(tmp_path: Path, repo: str) -> dict:
+    """Open the page on the address of one repository, with the harness that has an address bar."""
+    import test_issue_45_repo_tabs as t45
+    d = tmp_path / repo.split("/")[1]
+    d.mkdir()
+    step = t45.run_page(d, snapshot_for_page(), [{"now": "2026-11-24T12:00:00Z", "live": live_for_page()}],
+                        f"#/{repo.split('/')[1]}")[0]
+    assert t45.selected(step["page"]) == [repo.split("/")[1]], "the address did not open that repository"
+    return step
+
+
+def assert_rows_of_only(rows: list[str], repo: str, kind: str):
+    """rows are exactly this repository's rows of this kind (number and title), none of the other's."""
+    other = FA if repo == LF else LF
+    want = ROWS_OF[repo][kind]
+    assert len(rows) == len(want), rows
+    for n, title in want:
+        row = next((r for r in rows if title in r), None)
+        assert row is not None, f"{title!r} missing from the {repo} view: {rows}"
+        assert str(n) in words(row) or f"#{n}" in row, f"issue number {n} missing in {row!r}"
+    for _, title in ROWS_OF[other][kind]:
+        assert not [r for r in rows if title in r], f"{title!r} of {other} shows in the {repo} view"
+
+
+@pytest.mark.parametrize("repo", [LF, FA])
+def test_c3_every_queue_row_shows_its_repository(tmp_path, repo):
+    step = open_repo_view(tmp_path, repo)
     ul = next(n for n in walk(step["page"]) if n["a"].get("id") == "queue")
     rows = [text(li) for li in walk(ul) if li["t"] == "li"]
-    assert_tagged(rows, [(LF, 7), (FA, 7), (FA, 8)])
+    assert_rows_of_only(rows, repo, "queue")
 
 
-def test_c3_every_lane_shows_its_repository(tmp_path):
-    step = run_page(tmp_path, snapshot_for_page(), live_for_page())
+@pytest.mark.parametrize("repo", [LF, FA])
+def test_c3_every_lane_shows_its_repository(tmp_path, repo):
+    step = open_repo_view(tmp_path, repo)
     heads = [text(h) for h in with_class(step["live"], "lane-head")]
-    assert len(heads) == 3, "two lanes with the same issue number in two repositories stay two lanes"
-    by_title = {t: h for t in ("LF seven lane", "Factory seven lane", "Factory six lane") for h in heads if t in h}
-    assert_tagged([by_title["LF seven lane"]], [(LF, 7)])
-    assert_tagged([by_title["Factory seven lane"]], [(FA, 7)])
-    assert_tagged([by_title["Factory six lane"]], [(FA, 6)])
+    assert_rows_of_only(heads, repo, "lanes")
 
 
-def test_c3_every_issue_row_in_the_stations_view_shows_its_repository(tmp_path):
-    step = run_page(tmp_path, snapshot_for_page(), live_for_page())
+@pytest.mark.parametrize("repo", [LF, FA])
+def test_c3_every_issue_row_in_the_stations_view_shows_its_repository(tmp_path, repo):
+    step = open_repo_view(tmp_path, repo)
     rows = [text(r) for r in with_class(step["live"], "live-issue")]
-    assert len(rows) == 3, rows
-    expected = {"LF seven lane": (LF, 7), "Factory seven lane": (FA, 7), "Factory six lane": (FA, 6)}
-    for title, want in expected.items():
-        assert_tagged([next(r for r in rows if title in r)], [want])
+    assert_rows_of_only(rows, repo, "lanes")
 
 
-def test_c3_the_two_repository_snapshot_renders_without_errors_or_unsafe_markup(tmp_path):
-    step = run_page(tmp_path, snapshot_for_page(), live_for_page())
+@pytest.mark.parametrize("repo", [LF, FA])
+def test_c3_the_two_repository_snapshot_renders_without_errors_or_unsafe_markup(tmp_path, repo):
+    step = open_repo_view(tmp_path, repo)
     assert step["innerHTML"] == [] and step["style_attr"] == []
     page_text = text(step["page"])
-    for needle in ("Factory eight ready", "Merged pr", "Open pr", "Factory owner item"):
-        assert needle in page_text, f"{needle!r} not on the page"
+    needles = {LF: ("LF seven ready", "Merged pr", "LF first decision"),
+               FA: ("Factory eight ready", "Open pr", "Factory owner item")}[repo]
+    for needle in needles:
+        assert needle in page_text, f"{needle!r} not on the {repo} view"
     assert "snapshot unavailable" not in page_text
 
 

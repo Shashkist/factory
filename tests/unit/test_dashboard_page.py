@@ -14,6 +14,7 @@ STATIC = ROOT / "src" / "factory_tools" / "dashboard" / "static"
 HARNESS = ROOT / "tests" / "acceptance" / "dashboard" / "dom_harness_6.js"
 LF = "Shashkist/Learning_factory"
 FA = "Shashkist/factory"
+TP = {"closed_per_day": [0] * 14, "median_lead_time_hours": 0, "open_incidents": 0}
 COUNTS = {"open": 1, "closed": 0, "by_status": {}, "by_phase": {}, "by_priority": {}}
 
 
@@ -21,7 +22,7 @@ def snapshot() -> dict[str, Any]:
     return {
         "generated_at": "2026-11-24T11:59:00+00:00",
         "issues": COUNTS,
-        "repos": {LF: {"issues": COUNTS}, FA: {"issues": COUNTS}},
+        "repos": {LF: {"issues": COUNTS, "claim": None, "throughput": TP}, FA: {"issues": COUNTS, "claim": None, "throughput": TP}},
         "lanes": [], "queue": [], "claim": None,
         "prs": {"open": [], "merged": [
             {"repo": FA, "number": 99, "title": "feat: factory thing (#7)", "url": "https://x/99",
@@ -72,24 +73,31 @@ def step(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     return render(tmp_path_factory.mktemp("page"))
 
 
-def test_a_lane_with_empty_repo_is_tagged_with_the_host_repository(step: dict[str, Any]) -> None:
+def test_a_lane_with_empty_repo_belongs_to_the_host_view_and_shows_the_number_only(step: dict[str, Any]) -> None:
     live = text(step["live"])
-    assert "Learning_factory#7 host lane" in live
+    assert "#7 host lane" in live and "Learning_factory#7" not in live
     assert "(PR #99)" not in live, "a lane never takes another repository's pull request"
 
 
-def test_decisions_are_the_newest_six_per_repository_with_a_repository_tag(step: dict[str, Any]) -> None:
+def test_decisions_are_the_newest_six_of_the_selected_repository(step: dict[str, Any]) -> None:
     d = by_id(step, "decisions")
-    assert "Learning_factory D8" in d and "Learning_factory D3" in d and "Learning_factory D2" not in d
-    assert "factory D2" in d and "factory D1" in d
+    assert "D8" in d and "D3" in d and "D2" not in d
+    assert "fa decision" not in d
 
 
-def test_owner_rows_carry_the_repository(step: dict[str, Any]) -> None:
-    assert "factory O3" in by_id(step, "owner")
+def test_owner_rows_of_another_repository_are_not_shown(step: dict[str, Any]) -> None:
+    assert "fa owner" not in by_id(step, "owner")
 
 
-def test_counts_per_repository_and_only_present_workflows(step: dict[str, Any]) -> None:
-    c = by_id(step, "repo-counts")
-    assert "Learning_factory: 1 open" in c and "factory: 1 open" in c
+def test_counts_and_health_are_the_selected_repositorys(step: dict[str, Any]) -> None:
+    assert by_id(step, "counts").startswith("1 open")
     h = by_id(step, "health")
-    assert "Learning_factory CI" in h and "Deploy" not in h and "Smoke" not in h
+    assert "CI" in h and "Deploy" not in h and "Smoke" not in h
+
+
+def test_the_bar_has_one_tab_per_repository_with_the_host_selected(step: dict[str, Any]) -> None:
+    nav = next(n for n in walk(step["page"]) if n["t"] == "nav")
+    tabs = [n for n in walk(nav) if n["t"] == "a"]
+    assert [text(t) for t in tabs] == ["Learning_factory 1", "factory 1"]
+    assert [t["a"].get("aria-current") for t in tabs] == ["page", None]
+    assert [t["a"]["href"] for t in tabs] == ["#/Learning_factory", "#/factory"]

@@ -65,3 +65,20 @@ def test_gh_calls_name_the_repository_and_read_raw(monkeypatch: pytest.MonkeyPat
     assert seen[1][:4] == ["pr", "list", "-R", "o/a"]
     assert seen[2][1] == "repos/o/a/contents/docs/factory/DECISIONS.md"
     assert "application/vnd.github.raw" in seen[2][-1]
+
+
+def test_build_fetches_each_claimed_issues_comments_once(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    d = tmp_path / "o__a"
+    d.mkdir()
+    (d / "issues.json").write_text(json.dumps([issue(1, ["status:in-progress"])]), encoding="utf-8")
+    calls: list[int] = []
+    real = Source.comments
+
+    def counting(self: Source, number: int) -> list[dict[str, object]]:
+        calls.append(number)
+        return real(self, number)
+
+    monkeypatch.setattr(Source, "comments", counting)
+    build([Source(tmp_path, "o/a")], datetime(2026, 11, 24, tzinfo=UTC))
+    assert calls == [1]
