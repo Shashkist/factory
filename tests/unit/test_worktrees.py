@@ -38,11 +38,10 @@ def test_closed_follows_the_remote_check() -> None:
 
 
 def test_subagent_needs_pass_start_and_idle_time() -> None:
-    assert not wt.decide_subagent(NOW - 9999, None, True, NOW)[0]
-    assert not wt.decide_subagent(START + 1, START, True, NOW)[0]
-    assert not wt.decide_subagent(NOW - 600, START + 3000, True, NOW)[0]
-    assert wt.decide_subagent(NOW - 9999, START, True, NOW)[0]
-    assert not wt.decide_subagent(NOW - 9999, START, False, NOW)[0]
+    assert not wt.decide_subagent(NOW - 9999, None, NOW)[0]
+    assert not wt.decide_subagent(START + 1, START, NOW)[0]
+    assert not wt.decide_subagent(NOW - 600, START + 3000, NOW)[0]
+    assert wt.decide_subagent(NOW - 9999, START, NOW)[0]
 
 
 def test_parse_iso_reads_z_offset_and_naive_as_utc() -> None:
@@ -71,3 +70,32 @@ def test_adding_now_sees_an_admin_dir_without_gitdir(tmp_path: Path) -> None:
 def test_list_names_caps_long_lists() -> None:
     out = wt.list_names([f"f{i}" for i in range(25)], [".venv/"])
     assert "and 5 more" in out and "ignored: .venv/" in out
+
+
+def test_origin_url_forms_for_the_repo_check(tmp_path: Path) -> None:
+    m = wt.GITHUB_URL.match
+    for url in (
+        "https://github.com/Shashkist/factory",
+        "https://github.com/shashkist/FACTORY.git",
+        "git@github.com:Shashkist/factory.git",
+        "ssh://git@github.com/Shashkist/factory.git/",
+    ):
+        g = m(url)
+        assert g and f"{g.group(1)}/{g.group(2)}".lower() == "shashkist/factory", url
+    assert m("/tmp/some/local/path") is None
+    assert m("https://gitlab.com/Shashkist/factory") is None
+
+
+def test_emit_survives_a_console_that_cannot_show_the_text(capsys: object) -> None:
+    import io
+    import sys
+
+    old = sys.stdout
+    sys.stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    try:
+        wt.emit("KEPT wt-\u05e9 x")
+        sys.stdout.flush()
+        out = sys.stdout.buffer.getvalue()  # type: ignore[attr-defined]
+    finally:
+        sys.stdout = old
+    assert b"\\u05e9" in out

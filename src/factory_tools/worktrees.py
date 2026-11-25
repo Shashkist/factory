@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -61,18 +62,16 @@ def decide_feature(
 
 
 def decide_subagent(
-    created: float, pass_start: float | None, tip_on_remote: bool, now: float | None = None
+    created: float, pass_start: float | None, now: float | None = None
 ) -> tuple[bool, str]:
-    """(remove?, reason) for a subagent worktree from its last activity and whether it is pushed."""
+    """(remove?, reason) for a subagent worktree from its last activity; the push is asked later."""
     if pass_start is None:
         return False, "no --pass-start, age unknown"
     if created >= pass_start:
         return False, "created in this pass"
     if (time.time() if now is None else now) - created < STALE_AFTER:
         return False, "recent activity inside the stale-claim window"
-    if tip_on_remote:
-        return True, "older than this pass, tip is on the remote"
-    return False, "older than this pass but the tip is not on any remote branch"
+    return True, "older than this pass"
 
 
 def git(cwd: Path | str, *args: str) -> subprocess.CompletedProcess[str]:
@@ -97,13 +96,25 @@ def parse_worktrees(porcelain: str) -> list[dict[str, str]]:
 
 def split_status(path: Path) -> Status | None:
     """(tracked changes, untracked, ignored) of a worktree, None when git cannot say."""
-    r = git(path, "status", "--porcelain", "--ignored=matching")
+    r = git(path, "--no-optional-locks", "status", "--porcelain", "-z", "--ignored=matching")
     if r.returncode != 0:
         return None
-    out = r.stdout.splitlines()
-    tracked = [ln[3:] for ln in out if not ln.startswith(("??", "!!"))]
-    untracked = [ln[3:] for ln in out if ln.startswith("??")]
-    ignored = [ln[3:] for ln in out if ln.startswith("!!")]
+    tracked: list[str] = []
+    untracked: list[str] = []
+    ignored: list[str] = []
+    items = iter(r.stdout.split("\0"))
+    for item in items:
+        if len(item) < 4:
+            continue
+        code, name = item[:2], item[3:]
+        if code == "??":
+            untracked.append(name)
+        elif code == "!!":
+            ignored.append(name)
+        else:
+            tracked.append(name)
+            if "R" in code or "C" in code:
+                next(items, None)  # the original name of a rename or copy
     return tracked, untracked, ignored
 
 
@@ -171,8 +182,17 @@ def parse_iso(text: str) -> float:
     return dt.timestamp()
 
 
+def emit(text: str) -> None:
+    """Print a line; a console that cannot show a character gets an escape for it."""
+    try:
+        print(text, flush=True)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(text.encode(enc, errors="backslashreplace").decode(enc), flush=True)
+
+
 def say(status: str, path: Path, reason: str) -> None:
-    print(f"{status} {path} {reason}", flush=True)
+    emit(f"{status} {path} {reason}")
 
 
 def list_names(untracked: list[str], ignored: list[str]) -> str:
@@ -194,13 +214,33 @@ def folder_is_free(path: Path) -> bool:
     try:
         tmp.rename(path)
     except OSError:
-        print(f"WARNING {tmp} could not be renamed back to {path}", flush=True)
+        emit(f"WARNING {tmp} could not be renamed back to {path}")
         return False
     return True
 
 
-def remove(main_root: Path, path: Path, branch: str, reason: str, dry_run: bool) -> None:
-    status = split_status(path)
+def nested_inside(main_root: Path, path: Path) -> Path | None:
+    """A worktree of the list, or any .git file or folder, lying inside path (not its own)."""
+    listed = parse_worktrees(git(main_root, "worktree", "list", "--porcelain").stdout)
+    for t in listed:
+        other = Path(t["worktree"]).resolve()
+        if other != path and other.is_relative_to(path):
+            return other
+    for root, dirs, files in os.walk(path):
+        here = Path(root)
+        for name in dirs + files:
+            if name == ".git" and here != path:
+                return here / name
+        if ".git" in dirs:
+            dirs.remove(".git")
+    return None
+
+
+def remove(
+    main_root: Path, path: Path, branch: str, reason: str, dry_run: bool,
+    status: Status | None = None,
+) -> None:
+    status = status or split_status(path)
     if status is None:
         say("KEPT", path, "git status failed, cannot tell what is in it")
         return
@@ -212,10 +252,10 @@ def remove(main_root: Path, path: Path, branch: str, reason: str, dry_run: bool)
     if dry_run:
         say("REMOVED", path, "would remove (" + reason + ")")
         if names:
-            print(names, flush=True)
+            emit(names)
         return
     if names:
-        print(names, flush=True)
+        emit(names)
     if not folder_is_free(path):
         say("SKIPPED", path, "busy")
         return
@@ -244,8 +284,8 @@ def changed_paths(path: Path, status: Status) -> list[Path]:
     """Modified and untracked paths: a file a live session just wrote counts as activity."""
     tracked, untracked, _ = status
     out: list[Path] = []
-    for entry in [e.split(" -> ")[-1] for e in tracked] + untracked:
-        out += newest_under(path / entry.strip('"'))
+    for entry in tracked + untracked:
+        out += newest_under(path / entry)
     return out
 
 
@@ -297,15 +337,23 @@ def _judge_subagent(
         return
     touched = [f.stat().st_mtime for f in changed_paths(path, status) if f.exists()]
     created = max([created, *touched])
-    go, reason = decide_subagent(created, pass_start, True)
+    go, reason = decide_subagent(created, pass_start)
     if go:
         tip = git(path, "rev-parse", "HEAD").stdout.strip()
         go, why = tip_on_remote(main_root, tip, dry_run)
-        reason = reason if go else why
+        reason = "older than this pass, tip is on the remote" if go else why
     if go:
-        remove(main_root, path, branch, reason, dry_run)
+        remove(main_root, path, branch, reason, dry_run, status)
     else:
         say("KEPT", path, reason)
+
+
+def is_subagent(branch: str, path: Path) -> bool:
+    return (
+        branch.startswith("worktree-agent-")
+        and path.parent.name == "worktrees"
+        and path.name.startswith("agent-")
+    )
 
 
 def judge(
@@ -323,13 +371,11 @@ def judge(
         say("KEPT", path, "folder missing, left to git worktree prune")
     elif "locked" in wt:
         say("KEPT", path, "locked" + (": " + wt["locked"] if wt["locked"] else ""))
+    elif (m or is_subagent(branch, path)) and (inner := nested_inside(main_root, path)):
+        say("KEPT", path, f"holds another repository or worktree: {inner}")
     elif m:
         _judge_feature(branch, int(m.group(1)), main_root, path, args.dry_run, gh)
-    elif (
-        branch.startswith("worktree-agent-")
-        and path.parent.name == "worktrees"
-        and path.name.startswith("agent-")
-    ):
+    elif is_subagent(branch, path):
         _judge_subagent(branch, main_root, path, args.dry_run, pass_start)
     else:
         say("KEPT", path, "not a factory branch")
@@ -401,10 +447,34 @@ def adding_now(main_root: Path) -> bool:
         return True
 
 
+GITHUB_URL = re.compile(
+    r"^(?:(?:https?|ssh|git)://)?(?:[^@/]+@)?github\.com[:/]+([^/\s]+)/([^/\s]+?)(?:\.git)?/*$",
+    re.IGNORECASE,
+)
+
+
+def origin_mismatch(clone: Path, repo: str | None) -> str | None:
+    """An error text when origin is a GitHub URL naming a repository other than repo."""
+    if not repo:
+        return None
+    url = git(clone, "config", "--get", "remote.origin.url").stdout.strip()
+    m = GITHUB_URL.match(url)
+    if not m or f"{m.group(1)}/{m.group(2)}".lower() == repo.lower():
+        return None
+    return (
+        f"--repo {repo} does not match this clone: origin is {m.group(1)}/{m.group(2)}. "
+        "Run the prune from the clone of that repository."
+    )
+
+
 def run_prune(args: argparse.Namespace) -> int:
     pass_start = parse_iso(args.pass_start) if args.pass_start else None
     gh = claims.scoped(claims._run, args.repo)
     here = Path(git(".", "rev-parse", "--show-toplevel").stdout.strip()).resolve()
+    problem = origin_mismatch(here, args.repo)
+    if problem:
+        print("error: " + problem, file=sys.stderr, flush=True)
+        return 2
     trees = parse_worktrees(git(here, "worktree", "list", "--porcelain").stdout)
     main_root = Path(trees[0]["worktree"]).resolve()
     if not args.dry_run and not adding_now(main_root):
