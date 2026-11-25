@@ -59,9 +59,14 @@ def test_nested_exam_first_then_code_passes_with_exam_paths(repo: Repo) -> None:
     ok(nested(repo))
 
 
-def test_several_exam_globs_are_all_honoured(repo: Repo) -> None:
+@pytest.mark.parametrize(
+    "globs",
+    [("e2e/**", "labs/*/tests/acceptance/**"), ("labs/*/tests/acceptance/**", "e2e/**")],
+    ids=["matching-glob-first", "matching-glob-last"],
+)
+def test_several_exam_globs_are_all_honoured(repo: Repo, globs: tuple[str, str]) -> None:
     repo.commit({"e2e/spec_a.py": "1\n", NESTED_CODE: "1\n"}, "both")
-    r = repo.check("--exam-paths", "e2e/**", "labs/*/tests/acceptance/**")
+    r = repo.check("--exam-paths", *globs)
     bad(r)
     assert "FAIL:" in r.stdout, r.stdout
     assert "unrecognized" not in r.stderr and "usage:" not in r.stderr, r.stderr
@@ -98,10 +103,15 @@ def test_ci_paths_surface_is_waived_by_bootstrap(repo: Repo) -> None:
     ok(nested(repo, "--bootstrap", "--ci-paths", CALLER_WF))
 
 
-def test_ci_paths_accepts_several_globs(repo: Repo) -> None:
+@pytest.mark.parametrize(
+    "globs",
+    [("ci/**", CALLER_WF), (CALLER_WF, "ci/**")],
+    ids=["matching-glob-first", "matching-glob-last"],
+)
+def test_ci_paths_accepts_several_globs(repo: Repo, globs: tuple[str, str]) -> None:
     repo.commit({NESTED_EXAM: "1\n"}, "exam")
     repo.commit({"ci/run.sh": "1\n"}, "script")
-    r = nested(repo, "--ci-paths", "ci/**", CALLER_WF)
+    r = nested(repo, "--ci-paths", *globs)
     bad(r)
     assert "FAIL:" in r.stdout, r.stdout
     assert "unrecognized" not in r.stderr and "usage:" not in r.stderr, r.stderr
