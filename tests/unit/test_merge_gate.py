@@ -131,6 +131,8 @@ def reads(repo: str | None = "o/r", run: dict | None = None, ci: str = CI, statu
         path = args[-1]
         if "/actions/runs/" in path:
             return json.dumps(run or RUN)
+        if "/actions/jobs/" in path:
+            return json.dumps({"run_id": 7, "head_sha": HEAD, "name": "acceptance / gate"})
         if "/contents/" in path:
             return ci
         if "/compare/main..." in path:
@@ -144,8 +146,9 @@ def test_bound_gate_check_passes_and_each_read_is_made_once():
     r, calls = reads()
     twice = [BOUND, dict(BOUND, name="acceptance / gate")]
     assert merge_gate._binding_reasons(twice, "acceptance / gate", r) == []
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert calls[2][:3] == ["api", "-H", merge_gate.RAW]
+    assert calls[3][-1].endswith("/actions/jobs/8")
     assert calls[2][3].endswith(f"/contents/.github/workflows/ci.yml?ref={HEAD}")
 
 
@@ -261,3 +264,31 @@ def test_only_successful_protected_checks_are_bound():
         "exam-integrity has no caller job part (`<caller> / <job>`)"
     ]
     assert calls == []
+
+
+def _job(**over):
+    job = {"run_id": 7, "head_sha": HEAD, "name": "acceptance / gate"}
+    job.update(over)
+    return job
+
+
+def test_job_reason_genuine_job_passes():
+    assert merge_gate.job_reason("acceptance / gate", "7", "9", _job(), HEAD) is None
+
+
+@pytest.mark.parametrize(
+    ("job", "words"),
+    [
+        (None, "not a readable"),
+        (_job(run_id=8), "belongs to run 8"),
+        (_job(run_id="7"), "no run id"),
+        (_job(run_id=None), "no run id"),
+        (_job(name=None), "no run id"),
+        (_job(head_sha=None), "no head sha"),
+        (_job(head_sha="b" * 40), "not for head"),
+        (_job(name="gate"), "not the check name"),
+    ],
+)
+def test_job_reason_holds(job, words):
+    reason = merge_gate.job_reason("acceptance / gate", "7", "9", job, HEAD)
+    assert reason and words in reason
