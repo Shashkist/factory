@@ -19,6 +19,11 @@ VERDICT = re.compile(r"^Review round (\d+): (APPROVE|CHANGES) at ([0-9a-fA-F]{7,
 CLOSES = re.compile(r"^\s*closes\s+#(\d+)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
+def _is_exam_integrity(name: str) -> bool:
+    """`exam-integrity`, or a reusable-workflow job named `<caller> / exam-integrity`."""
+    return name == "exam-integrity" or name.endswith(" / exam-integrity")
+
+
 def _check_reasons(checks: list[dict[str, Any]]) -> list[str]:
     if not checks:
         return ["no checks have run on this PR"]
@@ -28,9 +33,9 @@ def _check_reasons(checks: list[dict[str, Any]]) -> list[str]:
         state = (c.get("conclusion") or c.get("state") or "").upper()
         if c.get("status", "COMPLETED") != "COMPLETED" or state in ("", "PENDING", "EXPECTED"):
             reasons.append(f"{name} is pending")
-        elif state not in PASSED or (name == "exam-integrity" and state != "SUCCESS"):
+        elif state not in PASSED or (_is_exam_integrity(name) and state != "SUCCESS"):
             reasons.append(f"{name} ended in {state.lower()}")
-    if not any((c.get("name") or c.get("context")) == "exam-integrity" for c in checks):
+    if not any(_is_exam_integrity(c.get("name") or c.get("context") or "") for c in checks):
         reasons.append("exam-integrity has not run")
     return reasons
 
