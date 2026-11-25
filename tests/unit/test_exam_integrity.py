@@ -129,3 +129,43 @@ def test_parse_takes_several_globs_per_option() -> None:
     assert (a.base, a.head, a.bootstrap) == ("b", "h", True)
     assert (a.exam_paths, a.ci_paths) == (["x/**", "y"], ["z"])
     assert exam_integrity._parse(["b", "h"]).exam_paths is None
+
+
+def test_pytest_config_is_exam_whatever_exam_paths_says() -> None:
+    globs = ["labs/*/tests/acceptance/**"]
+    for name in ("conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"):
+        assert check([[f"labs/m/tests/{name}", CODE]], exam_paths=globs)
+    assert check([["labs/m/tests/unit/conftest.py", CODE]], exam_paths=globs) == []
+
+
+def test_parse_splits_one_value_and_never_reads_a_flag_from_it() -> None:
+    a = exam_integrity._parse(["b", "h", "--exam-paths=x --bootstrap", "--ci-paths=y"])
+    assert a.exam_paths == ["x", "--bootstrap"]
+    assert a.bootstrap is False
+    assert a.ci_paths == ["y"]
+
+
+def test_parse_refuses_abbreviations() -> None:
+    with pytest.raises(SystemExit):
+        exam_integrity._parse(["b", "h", "--boot"])
+
+
+def test_parse_repeated_options_extend() -> None:
+    argv = ["b", "h", "--exam-paths", "x", "--exam-paths=y z", "--exam-paths", "w", "v"]
+    a = exam_integrity._parse(argv)
+    assert a.exam_paths == ["x", "y", "z", "w", "v"]
+
+
+def test_globs_are_normalised() -> None:
+    both = ["tests/acceptance/a.py", CODE]
+    assert check([both], exam_paths=["tests/acceptance/"])
+    assert check([both], exam_paths=["./tests/**"])
+    assert check([[EXAM], [CI]], ci_paths=["./src/factory_tools/ci/"])
+    assert check([[EXAM], ["ci/run.sh"]], ci_paths=["./ci/"])
+    assert check([[EXAM], ["other/run.sh"]], ci_paths=["./ci/"]) == []
+
+
+def test_top_level_tests_is_code_only_under_exam_paths() -> None:
+    mixed = ["tests/helper.py", "labs/m/tests/acceptance/a.py"]
+    assert check([mixed], exam_paths=["labs/**/acceptance/**"])
+    assert check([["tests/unit/a.py", CODE]]) == []

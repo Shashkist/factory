@@ -14,8 +14,11 @@ Fails when:
   (src/factory_tools/ci/** or the CI workflow); skipped with --bootstrap,
   used when the base branch has no copy of this script yet.
 
---exam-paths replaces the exam rule (tests/ except tests/unit/, plus the pytest
-configuration files) with the given globs; --ci-paths replaces the CI surface.
+--exam-paths replaces the tests/ part of the exam rule with the given globs; the
+pytest configuration files outside tests/unit/ are always exam, and the "top-level
+tests/ is never code" exception applies only without --exam-paths. --ci-paths
+replaces the CI surface. A value may hold several whitespace-separated globs.
+A leading ./ is dropped and a trailing / means <dir>/**.
 Globs are fnmatch style, matched against the whole repo-relative path, and `*`
 and `**` both match across `/`. Both are optional; the defaults are as above.
 """
@@ -29,22 +32,45 @@ MERGE_MSG = "merge commits are not allowed on a PR branch; rebase onto main"
 PYTEST_CONFIG = {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"}
 
 
+def _norm_glob(g: str) -> str:
+    while g.startswith("./"):
+        g = g[2:]
+    if g.endswith("/"):
+        g += "**"
+    return g
+
+
+def _globs(values: list[str] | None) -> list[str] | None:
+    """Split each value on whitespace and normalise; None when nothing was given."""
+    if values is None:
+        return None
+    return [_norm_glob(g) for v in values for g in v.split()] or None
+
+
 def _matches(path: str, globs: list[str]) -> bool:
-    return any(fnmatchcase(path, g) for g in globs)
+    return any(fnmatchcase(path, _norm_glob(g)) for g in globs)
+
+
+def _in_unit(parts: list[str]) -> bool:
+    return any(parts[i : i + 2] == ["tests", "unit"] for i in range(len(parts) - 1))
 
 
 def _is_exam(path: str, exam_paths: list[str] | None = None) -> bool:
+    parts = path.split("/")
+    # pytest configuration outside tests/unit/ can skip or rewrite exam results,
+    # whatever the exam globs say
+    if parts[-1] in PYTEST_CONFIG and not _in_unit(parts):
+        return True
     if exam_paths is not None:
         return _matches(path, exam_paths)
-    parts = path.split("/")
-    if parts[:2] == ["tests", "unit"]:
-        return False
-    # pytest configuration outside tests/unit/ can skip or rewrite exam results
-    return parts[-1] in PYTEST_CONFIG or parts[0] == "tests"
+    return parts[0] == "tests" and parts[:2] != ["tests", "unit"]
 
 
 def _is_code(path: str, exam_paths: list[str] | None = None) -> bool:
-    return not _is_exam(path, exam_paths) and path.split("/")[0] != "tests"
+    if _is_exam(path, exam_paths):
+        return False
+    # top-level tests/ is never code, with the default exam rules only
+    return exam_paths is not None or path.split("/")[0] != "tests"
 
 
 def _is_ci_surface(path: str, ci_paths: list[str] | None = None) -> bool:
@@ -116,13 +142,17 @@ def main(
 
 
 def _parse(argv: list[str]) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(prog="exam_integrity.py")
+    ap = argparse.ArgumentParser(prog="exam_integrity.py", allow_abbrev=False)
     ap.add_argument("base")
     ap.add_argument("head")
     ap.add_argument("--bootstrap", action="store_true")
-    ap.add_argument("--exam-paths", nargs="+", metavar="GLOB")
-    ap.add_argument("--ci-paths", nargs="+", metavar="GLOB")
-    return ap.parse_args(argv)
+    ap.add_argument("--exam-paths", nargs="+", action="extend", metavar="GLOB")
+    ap.add_argument("--ci-paths", nargs="+", action="extend", metavar="GLOB")
+    a = ap.parse_args(argv)
+    # each value may hold several whitespace-separated globs (one value per workflow input)
+    a.exam_paths = _globs(a.exam_paths)
+    a.ci_paths = _globs(a.ci_paths)
+    return a
 
 
 if __name__ == "__main__":

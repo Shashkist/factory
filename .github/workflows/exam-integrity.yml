@@ -84,14 +84,13 @@ jobs:
             echo "::error::origin/$BASE_REF does not exist in the checkout"
             exit 1
           fi
-          # Globs are split on whitespace with globbing off (set -f), so a
-          # pattern such as tests/** reaches the judge as text.
-          set -f
+          # Each input is one argv value; the judge splits it on whitespace, so
+          # an input can never become a flag of its own.
           args=()
           if [ -n "${EXAM_PATHS//[[:space:]]/}" ]; then
-            args+=(--exam-paths $EXAM_PATHS)
+            args+=("--exam-paths=$EXAM_PATHS")
           fi
           if [ -n "${CI_PATHS//[[:space:]]/}" ]; then
-            args+=(--ci-paths $CI_PATHS)
+            args+=("--ci-paths=$CI_PATHS")
           fi
           /usr/bin/python3 -I .factory-tools/src/factory_tools/ci/exam_integrity.py "origin/$BASE_REF" "$HEAD_SHA" "${args[@]}"
