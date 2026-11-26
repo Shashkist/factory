@@ -1,0 +1,16 @@
+# Throwaway caller for #82 criterion 2 (draft PR, never merged): runs the
+# released incident.yml through workflow_call at the v0.2.0 commit.
+name: Scratch incident caller 82
+on:
+  pull_request:
+    paths: [".github/workflows/scratch-incident-82.yml"]
+jobs:
+  incident:
+    permissions:
+      contents: read
+      issues: write
+    uses: Shashkist/factory/.github/workflows/incident.yml@29a613e65389cbee2dc646cec25e71863d00064c # v0.2.0
+    with:
+      workflow-name: Scratch caller 82
+      run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      conclusion: failure
