@@ -7,9 +7,10 @@ The exam is every file under tests/ except tests/unit/, plus pytest
 configuration files (conftest.py, pytest.ini, .pytest.ini, tox.ini, setup.cfg)
 anywhere outside tests/unit/, plus the interpreter start hooks at any path (Python
 runs them before the exam does): *.pth; a sitecustomize or usercustomize module
-(.py, .pyw, .pyc, .pyd, .so, or an extension with one ABI tag such as
-sitecustomize.cpython-312-x86_64-linux-gnu.so); and anything under a directory
-named sitecustomize or usercustomize (package form).
+(.py, .pyw, .pyc, .pyd, .so, with any cache or ABI tag in between such as
+__pycache__/sitecustomize.cpython-312.pyc or sitecustomize.cp312-win_amd64.pyd);
+a bare sitecustomize or usercustomize entry (a symlink to a package); and
+anything under a directory named sitecustomize or usercustomize (package form).
 Code is every path outside tests/ that is not the exam.
 Fails when:
 - the range contains merge commits;
@@ -37,7 +38,6 @@ MERGE_MSG = "merge commits are not allowed on a PR branch; rebase onto main"
 PYTEST_CONFIG = {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"}
 SITE_HOOKS = {"sitecustomize", "usercustomize"}
 SITE_SUFFIXES = {"py", "pyw", "pyc", "pyd", "so"}
-SITE_EXT_SUFFIXES = {"pyd", "so"}  # may carry one ABI tag: sitecustomize.cp312-win_amd64.pyd
 
 
 def _norm_glob(g: str) -> str:
@@ -71,9 +71,9 @@ def _is_site_hook(parts: list[str]) -> bool:
         return True
     if bits[0] not in SITE_HOOKS:
         return False
-    return (len(bits) == 2 and bits[1] in SITE_SUFFIXES) or (
-        len(bits) == 3 and bits[2] in SITE_EXT_SUFFIXES
-    )
+    # a bare name is a symlink or file Python can import as the hook; any middle parts
+    # are a cache or ABI tag (sitecustomize.cpython-312.pyc, sitecustomize.cp312-win_amd64.pyd)
+    return len(bits) == 1 or bits[-1] in SITE_SUFFIXES
 
 
 def _is_exam(path: str, exam_paths: list[str] | None = None) -> bool:

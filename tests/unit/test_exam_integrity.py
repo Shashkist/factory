@@ -191,7 +191,10 @@ def test_top_level_tests_is_code_only_under_exam_paths() -> None:
     ["sitecustomize.py", "src/usercustomize.py", "tests/unit/sitecustomize.py", "a/b/x.pth",
      "src/sitecustomize/__init__.py", "usercustomize/a/b.py", "sitecustomize.pyw",
      "sitecustomize.pyc", "sitecustomize.pyd", "sitecustomize.so", "src/usercustomize.pyc",
-     "sitecustomize.cpython-312-x86_64-linux-gnu.so", "sitecustomize.cp312-win_amd64.pyd"],
+     "sitecustomize.cpython-312-x86_64-linux-gnu.so", "sitecustomize.cp312-win_amd64.pyd",
+     "src/sitecustomize", "usercustomize", "src/__pycache__/sitecustomize.cpython-312.pyc",
+     "src/sitecustomize.cpython-312.pyc", "__pycache__/usercustomize.cpython-312.opt-1.pyc",
+     "sitecustomize.abi3.so"],
 )
 def test_site_hooks_are_exam(path: str) -> None:
     assert len(check([[path, CODE]])) == 1
@@ -201,6 +204,7 @@ def test_site_hooks_are_exam(path: str) -> None:
 @pytest.mark.parametrize("path", [
         "my_sitecustomize.py", "src/pth.py", "src/foo.pth.txt", "usercustomize_helper.py",
         "sitecustomize.pyi.txt", "sitecustomize_old/x.py", "src/sitecustomize.txt",
+        "src/__pycache__/sitecustomize.cpython-312.pyc.txt", "src/sitecustomizer",
     ])
 def test_near_miss_names_are_code(path: str) -> None:
     assert check([[path, CODE]]) == []
