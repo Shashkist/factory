@@ -17,7 +17,13 @@ WF_DIR = ROOT / ".github" / "workflows"
 DOC = ROOT / "docs" / "ci.md"
 REQUIRED = {"exam-integrity.yml", "junit-gate.yml", "incident.yml"}
 
-USES = re.compile(r"uses:\s*Shashkist/factory/\.github/workflows/([\w.-]+)@(\S+)(.*)$")
+# Every `uses:` line naming a .github/workflows/ file: quoted or not, any case, any
+# owner/repo, or local (./.github/workflows/x.yml, which has no @ref: ref is "").
+USES = re.compile(
+    r"""uses:\s*(?P<q>['"]?)(?:\./|[\w.-]+/[\w.-]+/)\.github/workflows/"""
+    r"""(?P<file>[\w.-]+)(?:@(?P<ref>[^\s'"]*))?(?P=q)(?P<rest>.*)$""",
+    re.IGNORECASE,
+)
 PINNED = re.compile(r"^[0-9a-f]{40}$")
 VERSION_COMMENT = re.compile(r"^\s*#\s*(v\d+\.\d+\.\d+)\s*$")
 
@@ -105,7 +111,11 @@ def _section(name: str) -> str:
 
 
 def _uses_lines(text: str) -> list[tuple[str, str, str]]:
-    return [(m.group(1), m.group(2), m.group(3)) for m in map(USES.search, text.splitlines()) if m]
+    return [
+        (m.group("file"), m.group("ref") or "", m.group("rest"))
+        for m in map(USES.search, text.splitlines())
+        if m
+    ]
 
 
 def _is_valid_pin(ref: str, rest: str) -> bool:
@@ -150,7 +160,7 @@ def test_each_section_states_the_permissions_the_caller_must_grant(name: str) ->
 
 def test_every_uses_line_is_pinned_by_full_sha_with_version_comment() -> None:
     uses = _uses_lines(_doc_text())
-    assert uses, "docs/ci.md has no `uses: Shashkist/factory/.github/workflows/...` example"
+    assert uses, "docs/ci.md has no `uses: .../.github/workflows/...` example"
     bad = [f"{f}@{r}{rest}" for f, r, rest in uses if not _is_valid_pin(r, rest)]
     assert not bad, f"not pinned by a 40-hex SHA followed by a '# v<semver>' comment: {bad}"
 
@@ -169,3 +179,86 @@ def test_all_pinned_examples_use_one_sha_and_one_version() -> None:
     versions = {VERSION_COMMENT.match(u[2]).group(1) for u in uses}  # type: ignore[union-attr]
     assert len(shas) == 1, f"examples pin different SHAs: {sorted(shas)}"
     assert len(versions) == 1, f"examples name different versions: {sorted(versions)}"
+
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+WF = ".github/workflows/exam-integrity.yml"
+
+
+def _bad(line: str) -> list[str]:
+    return [f for f, r, rest in _uses_lines(line) if not _is_valid_pin(r, rest)]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"    uses: Shashkist/factory/{WF}@{SHA} # v0.1.0",
+        f"    - uses: Shashkist/factory/{WF}@{SHA} # v0.1.0",
+        f'    uses: "Shashkist/factory/{WF}@{SHA}" # v0.1.0',
+        f"    uses: 'Shashkist/factory/{WF}@{SHA}' # v0.1.0",
+        f"    uses: SHASKIST/Factory/.GitHub/Workflows/exam-integrity.yml@{SHA} # v0.1.0",
+        f"    uses: other-org/other.repo/{WF}@{SHA} # v0.1.0",
+    ],
+)
+def test_parser_collects_and_accepts_a_pinned_line(line: str) -> None:
+    assert len(_uses_lines(line)) == 1, f"line not collected: {line}"
+    assert _bad(line) == [], f"pinned line rejected: {line}"
+
+
+@pytest.mark.parametrize("quote", ["", '"', "'"])
+@pytest.mark.parametrize(
+    "ref,comment",
+    [
+        (SHA[:7], " # v0.1.0"),
+        (SHA[:12], " # v0.1.0"),
+        ("v0.1.0", ""),
+        ("v0.1.0", " # v0.1.0"),
+        ("main", ""),
+        (SHA, ""),
+        (SHA, " # main"),
+        (SHA.upper(), " # v0.1.0"),
+        (SHA + "0", " # v0.1.0"),
+    ],
+)
+def test_parser_collects_and_rejects_an_unpinned_line(quote: str, ref: str, comment: str) -> None:
+    line = f"    uses: {quote}Shashkist/factory/{WF}@{ref}{quote}{comment}"
+    assert len(_uses_lines(line)) == 1, f"line not collected: {line}"
+    assert len(_bad(line)) == 1, f"unpinned line accepted: {line}"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "    uses: ./.github/workflows/exam-integrity.yml",
+        '    uses: "./.github/workflows/exam-integrity.yml"',
+        "    uses: './.github/workflows/exam-integrity.yml'",
+        f"    uses: ./.github/workflows/exam-integrity.yml # {SHA} v0.1.0",
+        "    uses: ./.GITHUB/workflows/exam-integrity.yml",
+    ],
+)
+def test_parser_collects_and_rejects_a_local_workflow_line(line: str) -> None:
+    assert len(_uses_lines(line)) == 1, f"local line not collected: {line}"
+    assert len(_bad(line)) == 1, f"local line accepted as pinned: {line}"
+
+
+def test_parser_collects_another_owners_workflow_and_rejects_it_unpinned() -> None:
+    line = f"    uses: acme/ci/{WF}@main"
+    assert len(_uses_lines(line)) == 1
+    assert len(_bad(line)) == 1
+
+
+def test_parser_reports_the_workflow_file_name() -> None:
+    line = f'    uses: "Shashkist/factory/{WF}@{SHA}" # v0.1.0'
+    assert _uses_lines(line) == [("exam-integrity.yml", SHA, " # v0.1.0")]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "    uses: actions/checkout@v4",
+        "    uses: Shashkist/factory/actions/thing@main",
+        "    run: echo uses nothing",
+    ],
+)
+def test_parser_ignores_lines_not_naming_a_workflow_file(line: str) -> None:
+    assert _uses_lines(line) == []
