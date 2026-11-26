@@ -569,30 +569,19 @@ function renderLanes(d, rerender) {
     mgr.appendChild(el("span", runnerText(d.runner || {}), "muted"));
   }
   sec.appendChild(mgr);
-  if (idle) {   // the lanes of an ended pass are history: one short list, no live lanes
-    if (lanes.length) {
-      var last = el("div", null, "lane-last");
-      last.appendChild(el("b", "Last pass: "));
-      lanes.forEach(function (l, i) {
-        last.appendChild(el("span", (i ? " · " : "") + (l.shipped ? "✓ " : "⏸ ") + laneLabel(l.repo, l.issue) + " " + l.title +
-          (l.pr ? " (PR #" + S(l.pr.p.number) + ")" : "") + (l.shipped ? " shipped" : " paused")));
-      });
-      sec.appendChild(last);
-    }
-    return sec;
-  }
+  var host = idle ? el("div", null, "lane-last") : sec;   // the lanes of an ended pass are history, folded under "Last pass"
   var nRun = lanes.filter(function (l) { return l.running; }).length;
   var nDone = lanes.filter(function (l) { return l.shipped; }).length;
-  sec.appendChild(el("div", joined([lanes.length + " task" + (lanes.length === 1 ? "" : "s") + " in this pass",
+  if (!idle) sec.appendChild(el("div", joined([lanes.length + " task" + (lanes.length === 1 ? "" : "s") + " in this pass",
     nRun + " working in parallel", nDone ? nDone + " shipped" : "", "click a station for its sub-steps"]), "muted"));
-  var done = lanes.filter(function (l) { return l.shipped; });
-  lanes.filter(function (l) { return !l.shipped; }).forEach(function (l) {
-    var lane = lel("div", null, "lane", { "data-lane": l.key, "data-running": l.running ? "1" : "0" });
+  var done = idle ? [] : lanes.filter(function (l) { return l.shipped; });
+  lanes.filter(function (l) { return idle || !l.shipped; }).forEach(function (l) {
+    var lane = lel("div", null, "lane", { "data-lane": l.key, "data-running": l.running && !idle ? "1" : "0" });
     var head = el("div", null, "lane-head");
     head.appendChild(el("b", laneLabel(l.repo, l.issue) + " " + l.title));
     var pr = l.pr;
     head.appendChild(el("span", " " + joined([pr ? "PR #" + S(pr.p.number) + (pr.open ? "" : " merged") : "",
-      l.running ? "working" : "waiting", l.first ? "for " + dur(l.first) : "", l.updated ? "last update " + agoAt(l.updated) : ""]), "muted"));
+      idle ? (l.shipped ? "shipped" : "paused") : l.running ? "working" : "waiting", l.first && !idle ? "for " + dur(l.first) : "", l.updated ? "last update " + agoAt(l.updated) : ""]), "muted"));
     lane.appendChild(head);
     var bar = el("div", null, "lane-bar");
     LIVE_STATIONS.forEach(function (st, idx) {
@@ -625,8 +614,12 @@ function renderLanes(d, rerender) {
     l.crew.filter(function (n) { return n.state === "busy" || n.state === "thinking"; })
       .forEach(function (n) { lane.appendChild(agentLine(n)); });
     if (laneOpen[l.key]) lane.appendChild(laneDetail(l, laneOpen[l.key]));
-    sec.appendChild(lane);
+    host.appendChild(lane);
   });
+  if (idle && lanes.length) {
+    var nShipped = lanes.filter(function (l) { return l.shipped; }).length;
+    sec.appendChild(fold("last-pass", "Last pass: " + joined([nShipped + " shipped", (lanes.length - nShipped) + " paused"]), host, true));
+  }
   if (done.length) {
     var row = el("div", null, "lane-done");
     row.appendChild(el("b", "✓ Shipped this pass: "));
