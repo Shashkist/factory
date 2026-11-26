@@ -26,6 +26,7 @@ NESTED_EXAM = "labs/manager/tests/acceptance/test_issue_9_x.py"
 NESTED_CODE = "labs/manager/app/main.py"
 NESTED_GLOBS = ["labs/*/tests/acceptance/**"]
 CALLER_WF = ".github/workflows/lf-ci.yml"
+CALLER_CI = "ci/lf-ci.sh"
 
 
 @pytest.fixture
@@ -93,7 +94,7 @@ def test_caller_workflow_named_in_ci_paths_is_ci_surface(repo: Repo) -> None:
 
 def test_caller_workflow_is_plain_code_without_ci_paths(repo: Repo) -> None:
     repo.commit({NESTED_EXAM: "1\n"}, "exam")
-    repo.commit({CALLER_WF: "1\n"}, "caller workflow")
+    repo.commit({CALLER_CI: "1\n"}, "caller workflow")
     ok(nested(repo))
 
 
@@ -157,7 +158,7 @@ def test_defaults_ci_surface_with_exam_is_refused(repo: Repo, surface: str) -> N
 
 def test_defaults_do_not_treat_a_caller_workflow_as_ci_surface(repo: Repo) -> None:
     repo.commit({"tests/acceptance/x.py": "1\n"}, "exam")
-    repo.commit({CALLER_WF: "1\n"}, "caller workflow")
+    repo.commit({CALLER_CI: "1\n"}, "caller workflow")
     ok(repo.check())
 
 
