@@ -45,6 +45,7 @@ It fails when:
 What counts as what:
 
 - Exam, by default: every file under the top-level `tests/` except `tests/unit/`. `conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini` and `setup.cfg` always count as exam, also when `exam-paths` is set, except inside the top-level `tests/unit/` (by default) or inside any `tests/unit/` directory (when `exam-paths` is set).
+- `*.pth` files, `sitecustomize`/`usercustomize` modules (`.py`, `.pyw`, `.pyc`, `.pyd`, `.so`, with any cache or ABI tag in between, so `__pycache__/sitecustomize.cpython-312.pyc` too), a bare `sitecustomize` or `usercustomize` entry (a symlink to a package) and anything under a `sitecustomize/` or `usercustomize/` directory, at any path, always count as exam, also inside `tests/unit/` and when `exam-paths` is set: Python runs them at interpreter start, before the exam.
 - Code: every path that is not exam. By default the top-level `tests/` is never code. With `exam-paths` set, that exemption goes: a file under `tests/` that the globs do not match is code.
 - CI surface, by default: `src/factory_tools/ci/` and `.github/workflows/ci.yml` (the Factory's own layout). `ci-paths` replaces it.
 
