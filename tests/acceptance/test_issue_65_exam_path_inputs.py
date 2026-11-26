@@ -6,7 +6,7 @@ Names the implementer follows (chosen here, the issue does not fix them):
               Each option takes one or more globs (fnmatch style, `*` and `**` match
               across `/`). Both are optional; the defaults are today's values
               (exam = top-level tests/ except tests/unit, CI surface =
-              src/factory_tools/ci/ and .github/workflows/ci.yml). Positionals come
+              src/factory_tools/ci/ and every file under .github/workflows/). Positionals come
               first in these cases.
   workflow:   exam-integrity.yml `workflow_call` inputs `exam-paths` and `ci-paths`
               (type string, described), handed to the judge through `env:`.
