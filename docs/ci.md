@@ -26,6 +26,8 @@ This guide and the examples below document release `v0.1.0`, commit `95753bb72e9
 
 A called workflow shows up in the caller as `<caller job> / <called job>`. The merge gate reads these names ([D25](factory/DECISIONS.md), [D28](factory/DECISIONS.md)), so name the caller job and keep it stable. The names are given in each section. A caller job skipped by its own `if:` shows as the bare caller job name (for example `exam-integrity`, skipped on push), not `<caller> / <called>`.
 
+A caller-level `if:` that skips the whole call also skips the gate, so the gate's check never runs. A skipped required check passes, because GitHub counts it as passing, so a caller must keep any `if:` off the call it relies on.
+
 The merge gate's default exam gate is `acceptance / gate`. `factory-tools merge-gate --exam-gate "<job> / gate"` names another.
 
 ## `exam-integrity.yml`
