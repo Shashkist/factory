@@ -5,8 +5,11 @@ Usage: python exam_integrity.py <base> <head> [--bootstrap]
 
 The exam is every file under tests/ except tests/unit/, plus pytest
 configuration files (conftest.py, pytest.ini, .pytest.ini, tox.ini, setup.cfg)
-anywhere outside tests/unit/, plus the interpreter start hooks sitecustomize.py,
-usercustomize.py and *.pth at any path (Python runs them before the exam does).
+anywhere outside tests/unit/, plus the interpreter start hooks at any path (Python
+runs them before the exam does): *.pth; a sitecustomize or usercustomize module
+(.py, .pyw, .pyc, .pyd, .so, or an extension with one ABI tag such as
+sitecustomize.cpython-312-x86_64-linux-gnu.so); and anything under a directory
+named sitecustomize or usercustomize (package form).
 Code is every path outside tests/ that is not the exam.
 Fails when:
 - the range contains merge commits;
@@ -32,7 +35,9 @@ from fnmatch import fnmatchcase
 
 MERGE_MSG = "merge commits are not allowed on a PR branch; rebase onto main"
 PYTEST_CONFIG = {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"}
-SITE_HOOKS = {"sitecustomize.py", "usercustomize.py"}
+SITE_HOOKS = {"sitecustomize", "usercustomize"}
+SITE_SUFFIXES = {"py", "pyw", "pyc", "pyd", "so"}
+SITE_EXT_SUFFIXES = {"pyd", "so"}  # may carry one ABI tag: sitecustomize.cp312-win_amd64.pyd
 
 
 def _norm_glob(g: str) -> str:
@@ -58,13 +63,22 @@ def _in_unit(parts: list[str]) -> bool:
     return any(parts[i : i + 2] == ["tests", "unit"] for i in range(len(parts) - 1))
 
 
-def _is_site_hook(name: str) -> bool:
-    return name in SITE_HOOKS or name.endswith(".pth")
+def _is_site_hook(parts: list[str]) -> bool:
+    if any(d in SITE_HOOKS for d in parts[:-1]):  # package form: sitecustomize/__init__.py
+        return True
+    bits = parts[-1].split(".")
+    if bits[-1] == "pth" and len(bits) > 1:
+        return True
+    if bits[0] not in SITE_HOOKS:
+        return False
+    return (len(bits) == 2 and bits[1] in SITE_SUFFIXES) or (
+        len(bits) == 3 and bits[2] in SITE_EXT_SUFFIXES
+    )
 
 
 def _is_exam(path: str, exam_paths: list[str] | None = None) -> bool:
     parts = path.split("/")
-    if _is_site_hook(parts[-1]):
+    if _is_site_hook(parts):
         return True
     # pytest configuration outside tests/unit/ can skip or rewrite exam results,
     # whatever the exam globs say; the defaults exempt only the top-level tests/unit/
