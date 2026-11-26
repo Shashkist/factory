@@ -38,6 +38,11 @@ TOGETHER = "changes the exam and code together"
 EXAM = "tests/acceptance/test_a.py"
 CODE = "src/app/main.py"
 
+# The judge's modes: the defaults, and --exam-paths alone (no --ci-paths): the workflow
+# default must still apply when only the exam paths are given (D41 amendment 1).
+MODES = [(), ("--exam-paths", "tests/acceptance/**")]
+MODE_IDS = ["defaults", "exam-paths-alone"]
+
 PYPROJECT = "pyproject.toml"
 NESTED_PYPROJECT = "labs/manager/pyproject.toml"
 NO_TABLE = "labs/other/pyproject.toml"
@@ -78,10 +83,13 @@ def refused(r: subprocess.CompletedProcess[str], reason: str) -> None:
     ],
     ids=["other-yml", "other-yaml", "dashed-name", "nested-path"],
 )
-def test_workflow_changed_together_with_an_exam_file_is_refused(repo: Repo, wf: str) -> None:
+@pytest.mark.parametrize("mode", MODES, ids=MODE_IDS)
+def test_workflow_changed_together_with_an_exam_file_is_refused(
+    repo: Repo, wf: str, mode: tuple[str, ...]
+) -> None:
     repo.commit({EXAM: "1\n"}, "exam")
     repo.commit({wf: "on: push\n"}, "workflow")
-    refused(repo.check(), CI_REASON)
+    refused(repo.check(*mode), CI_REASON)
 
 
 def test_workflow_and_exam_in_one_commit_is_refused(repo: Repo) -> None:
