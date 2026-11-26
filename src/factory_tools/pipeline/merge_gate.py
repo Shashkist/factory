@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 
 from factory_tools import claims
-from factory_tools.ci.exam_integrity import _is_code, _is_exam
+from factory_tools.ci.exam_integrity import _globs, _is_ci_surface, _is_code, _is_exam
 
 MAX_REVIEW_ROUNDS = 2
 MAX_CI_ROUNDS = 5
@@ -298,20 +298,37 @@ def _commit_files(run: claims.Run, repo: str | None, oid: str) -> dict[str, Any]
     return {"files": merged}
 
 
-def _commit_reasons(pr: dict[str, Any], run: claims.Run, repo: str | None) -> list[str]:
+def _commit_reasons(
+    pr: dict[str, Any],
+    run: claims.Run,
+    repo: str | None,
+    exam_paths: list[str] | None = None,
+    ci_paths: list[str] | None = None,
+) -> list[str]:
+    """Exam-with-code mixing per commit, CI rounds, and (with globs given) exam with CI surface."""
     reasons = []
     ci_rounds = 0
+    all_names: list[str] = []
     for commit in pr.get("commits") or []:
         oid = commit["oid"]
         files = _commit_files(run, repo, oid)
         pairs = [(f["filename"], f.get("previous_filename")) for f in files.get("files", [])]
         names = [n for pair in pairs for n in pair if n]
-        if any(_is_exam(n) for n in names) and any(_is_code(n) for n in names):
+        all_names += names
+        if any(_is_exam(n, exam_paths) for n in names) and any(
+            _is_code(n, exam_paths) for n in names
+        ):
             reasons.append(f"commit {oid[:7]} changes tests/acceptance together with code")
-        if not (names and all(_is_exam(n) for n in names)):
+        if not (names and all(_is_exam(n, exam_paths) for n in names)):
             ci_rounds += 1
     if ci_rounds > MAX_CI_ROUNDS:
         reasons.append(f"ci round {ci_rounds} is over the limit of {MAX_CI_ROUNDS}")
+    if (
+        (exam_paths is not None or ci_paths is not None)
+        and any(_is_exam(n, exam_paths) for n in all_names)
+        and any(_is_ci_surface(n, ci_paths) for n in all_names)
+    ):
+        reasons.append("PR changes the exam together with the CI surface")
     return reasons
 
 
@@ -342,6 +359,8 @@ def decide(
     exam_gate: str = EXAM_GATE,
     run: claims.Run = claims._run,
     workflows_repo: str = WORKFLOWS_REPO,
+    exam_paths: list[str] | None = None,
+    ci_paths: list[str] | None = None,
 ) -> list[str]:
     """The HOLD reasons for a pull request; empty means MERGE."""
     gh = claims.scoped(run, repo)
@@ -366,13 +385,16 @@ def decide(
     if rounds > MAX_REVIEW_ROUNDS:
         reasons.append(f"review round {rounds} is over the limit of {MAX_REVIEW_ROUNDS}")
 
-    return reasons + _commit_reasons(pr, run, repo) + _claim_reasons(pr, session, gh)
+    reasons += _commit_reasons(pr, run, repo, exam_paths, ci_paths)
+    return reasons + _claim_reasons(pr, session, gh)
 
 
 def run_command(args: Any) -> int:
     reasons = decide(
         args.pr, args.session, args.repo, args.author, args.exam_gate,
         workflows_repo=args.workflows_repo,
+        exam_paths=_globs(args.exam_paths),
+        ci_paths=_globs(args.ci_paths),
     )
     for r in reasons:
         print("HOLD: " + r)
