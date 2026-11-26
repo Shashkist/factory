@@ -44,10 +44,10 @@ It fails when:
 
 What counts as what:
 
-- Exam, by default: every file under the top-level `tests/` except `tests/unit/`. `conftest.py`, `pytest.ini`, `.pytest.ini`, `tox.ini` and `setup.cfg` always count as exam, also when `exam-paths` is set, except inside the top-level `tests/unit/` (by default) or inside any `tests/unit/` directory (when `exam-paths` is set).
+- Exam, by default: every file under the top-level `tests/` except `tests/unit/`. `conftest.py`, `pytest.ini`, `.pytest.ini`, `pytest.toml`, `.pytest.toml`, `tox.ini` and `setup.cfg` always count as exam, also when `exam-paths` is set, except inside the top-level `tests/unit/` (by default) or inside any `tests/unit/` directory (when `exam-paths` is set).
 - `*.pth` files, `sitecustomize`/`usercustomize` modules (`.py`, `.pyw`, `.pyc`, `.pyd`, `.so`, with any cache or ABI tag in between, so `__pycache__/sitecustomize.cpython-312.pyc` too), a bare `sitecustomize` or `usercustomize` entry (a symlink to a package) and anything under a `sitecustomize/` or `usercustomize/` directory, at any path, always count as exam, also inside `tests/unit/` and when `exam-paths` is set: Python runs them at interpreter start, before the exam.
 - Code: every path that is not exam. By default the top-level `tests/` is never code. With `exam-paths` set, that exemption goes: a file under `tests/` that the globs do not match is code.
-- A file named `pyproject.toml` at any depth is exam in a commit when its parsed `tool.pytest.ini_options` table differs from the commit's parent (changed, added or removed; an unparsable file counts as changed), also when `exam-paths` is set. Otherwise it is code. Only the exam-integrity script reads file content; the merge gate works on file names and treats `pyproject.toml` as code.
+- A file named `pyproject.toml` at any depth is exam in a commit when its parsed `tool.pytest` table (`[tool.pytest.ini_options]` or pytest 9's native `[tool.pytest]`) differs from the commit's parent (changed, added or removed; an unparsable file counts as changed), also when `exam-paths` is set. Otherwise it is code. Only the exam-integrity script reads file content; the merge gate works on file names and treats `pyproject.toml` as code.
 - CI surface, by default: `src/factory_tools/ci/` and everything under `.github/workflows/` at the repository root (any name, `.yml` or `.yaml`, nested too; `docs/.github/workflows/` is not). `ci-paths` replaces it.
 
 A client with another layout sets `exam-paths` and `ci-paths`.

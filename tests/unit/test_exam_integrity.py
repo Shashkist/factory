@@ -259,3 +259,19 @@ def test_changed_pytest_tomls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert exam_integrity._changed_pytest_tomls(broken2, f) == changed
     gone = _commit("[project]\n")
     assert exam_integrity._changed_pytest_tomls(gone, f) == changed
+    native = _commit('[project]\n[tool.pytest]\naddopts = ["-q"]\n')  # pytest 9 native table
+    assert exam_integrity._changed_pytest_tomls(native, f) == changed
+    native2 = _commit('[project]\n[tool.pytest]\naddopts = ["-q", "-k", "not exam"]\n')
+    assert exam_integrity._changed_pytest_tomls(native2, f) == changed
+    subprocess.run(["git", "rm", "-q", "pyproject.toml"], check=True)
+    subprocess.run(["git", "commit", "-qm", "rm"], check=True)
+    deleted = subprocess.run(
+        ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    assert exam_integrity._changed_pytest_tomls(deleted, f) == changed
+
+
+@pytest.mark.parametrize("name", ["pytest.toml", ".pytest.toml", "sub/pytest.toml"])
+def test_pytest_toml_files_are_exam(name: str) -> None:
+    assert exam_integrity._is_exam(name, None, frozenset())
+    assert exam_integrity._is_exam(name, ["x/**"], frozenset())

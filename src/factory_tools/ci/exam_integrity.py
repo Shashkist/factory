@@ -4,16 +4,17 @@ Usage: python exam_integrity.py <base> <head> [--bootstrap]
            [--exam-paths GLOB [GLOB ...]] [--ci-paths GLOB [GLOB ...]]
 
 The exam is every file under tests/ except tests/unit/, plus pytest
-configuration files (conftest.py, pytest.ini, .pytest.ini, tox.ini, setup.cfg)
-anywhere outside tests/unit/, plus the interpreter start hooks at any path (Python
-runs them before the exam does): *.pth; a sitecustomize or usercustomize module
+configuration files (conftest.py, pytest.ini, .pytest.ini, pytest.toml, .pytest.toml,
+tox.ini, setup.cfg) anywhere outside tests/unit/, plus the interpreter start hooks at
+any path (Python runs them before the exam does): *.pth; a sitecustomize or usercustomize module
 (.py, .pyw, .pyc, .pyd, .so, with any cache or ABI tag in between such as
 __pycache__/sitecustomize.cpython-312.pyc or sitecustomize.cp312-win_amd64.pyd);
 a bare sitecustomize or usercustomize entry (a symlink to a package); and
 anything under a directory named sitecustomize or usercustomize (package form).
 A file named pyproject.toml at any depth is exam in a commit whose parsed
-tool.pytest.ini_options table differs from the parent's (changed, added or removed;
-an unparsable file counts as changed); otherwise it is code. It stays exam under
+tool.pytest table (the ini_options form and pytest 9's native form) differs from
+the parent's (changed, added or removed; an unparsable file counts as changed);
+otherwise it is code. It stays exam under
 --exam-paths. Judging that needs file content, so only the CI check does it; the merge
 gate works on file names and treats pyproject.toml as code.
 Code is every path outside tests/ that is not the exam.
@@ -41,7 +42,15 @@ import tomllib
 from fnmatch import fnmatchcase
 
 MERGE_MSG = "merge commits are not allowed on a PR branch; rebase onto main"
-PYTEST_CONFIG = {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"}
+PYTEST_CONFIG = {
+    "conftest.py",
+    "pytest.ini",
+    ".pytest.ini",
+    "pytest.toml",
+    ".pytest.toml",
+    "tox.ini",
+    "setup.cfg",
+}
 SITE_HOOKS = {"sitecustomize", "usercustomize"}
 SITE_SUFFIXES = {"py", "pyw", "pyc", "pyd", "so"}
 
@@ -151,7 +160,7 @@ def _git(*args: str) -> str:
 
 
 def _pytest_table(sha: str, path: str) -> object:
-    """The tool.pytest.ini_options table of path at sha; None when absent or no file.
+    """The tool.pytest table of path at sha (ini_options and the native form); None when absent.
 
     An unparsable file returns a unique sentinel, so it differs from any other state:
     fail closed, an exam change we cannot read is treated as one."""
@@ -160,7 +169,7 @@ def _pytest_table(sha: str, path: str) -> object:
     except subprocess.CalledProcessError:
         return None
     try:
-        return tomllib.loads(text).get("tool", {}).get("pytest", {}).get("ini_options")
+        return tomllib.loads(text).get("tool", {}).get("pytest")
     except (tomllib.TOMLDecodeError, AttributeError):
         return object()
 
@@ -170,16 +179,11 @@ def _changed_pytest_tomls(sha: str, files: list[str]) -> frozenset[str]:
     for f in files:
         if f.rsplit("/", 1)[-1] != "pyproject.toml":
             continue
-        parent = f"{sha}^"
-        before = _pytest_table(parent, f) if _has_parent(sha) else None
+        before = _pytest_table(f"{sha}^", f)  # no parent (root commit): git fails, None
         after = _pytest_table(sha, f)
         if before != after:
             out.add(f)
     return frozenset(out)
-
-
-def _has_parent(sha: str) -> bool:
-    return bool(_git("rev-list", "--parents", "-n", "1", sha).split()[1:])
 
 
 def main(
