@@ -446,6 +446,10 @@ def decide(
         # labels alone cannot be trusted here: a verdict labelled low may sit inside the span.
         first_extra = next(i for i, v in enumerate(verdicts) if v[0] > MAX_REVIEW_ROUNDS)
         at_limit = next(i for i, v in enumerate(verdicts) if v[0] >= MAX_REVIEW_ROUNDS)
+        if first_extra == 0:
+            reasons.append(
+                f"review round {verdicts[0][0]} was not asked for by a CHANGES verdict on this PR"
+            )
         tail = verdicts[max(0, min(at_limit, first_extra - 1)):]
         for v in tail[:-1]:
             if v[1] != "CHANGES":

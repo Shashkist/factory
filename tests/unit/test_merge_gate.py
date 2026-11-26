@@ -388,6 +388,11 @@ def _decide_rounds(monkeypatch, tmp_path, rounds):
     [(1, "APPROVE", R_OLD), (3, "APPROVE", R_HEAD)],
     [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (1, "APPROVE", R_OLD), (3, "APPROVE", R_HEAD)],
     [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (0, "APPROVE", R_OLD), (3, "APPROVE", R_HEAD)],
+    # no verdict on this PR asked for the extra round
+    [(3, "APPROVE", R_HEAD)],
+    [(4, "APPROVE", R_HEAD)],
+    [(3, "CHANGES", R_OLD), (4, "APPROVE", R_HEAD)],
+    [(3, "CHANGES", R_HEAD), (4, "APPROVE", R_HEAD)],
     # four reviews with only round 3 decided
     [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
     [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (1, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
@@ -402,7 +407,6 @@ def test_rounds_past_the_limit_hold_on_a_late_approve_or_a_backward_number(
     [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
     [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "CHANGES", R_OLD), (4, "APPROVE", R_HEAD)],
     [(1, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
-    [(3, "APPROVE", R_HEAD)],
 ])
 def test_decided_rounds_past_the_limit_merge(monkeypatch, tmp_path, rounds):
     assert _decide_rounds(monkeypatch, tmp_path, rounds) == []
