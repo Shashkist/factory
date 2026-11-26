@@ -302,3 +302,27 @@ def test_job_reason_genuine_job_passes():
 def test_job_reason_holds(job, words):
     reason = merge_gate.job_reason("acceptance / gate", "7", "9", job, HEAD)
     assert reason and words in reason
+
+
+def _commits_run(files_by_oid: dict[str, list[str]]):
+    def run(args: list[str]) -> str:
+        files = files_by_oid[args[-1].split("/")[-1]]
+        return json.dumps({"files": [{"filename": f} for f in files]})
+
+    return run
+
+
+def test_commit_reasons_exam_paths_classify_nested_exam_and_code():
+    pr = {"commits": [{"oid": "a1"}]}
+    run = _commits_run({"a1": ["labs/x/tests/acceptance/t.py", "labs/x/app.py"]})
+    assert merge_gate._commit_reasons(pr, run, "o/r") == []
+    reasons = merge_gate._commit_reasons(pr, run, "o/r", ["labs/*/tests/acceptance/**"])
+    assert len(reasons) == 1 and "together" in reasons[0]
+
+
+def test_commit_reasons_ci_surface_hold_only_when_a_glob_is_given():
+    pr = {"commits": [{"oid": "a1"}, {"oid": "b2"}]}
+    run = _commits_run({"a1": ["tests/acceptance/t.py"], "b2": ["labs/ci/p.yml"]})
+    assert merge_gate._commit_reasons(pr, run, "o/r") == []
+    reasons = merge_gate._commit_reasons(pr, run, "o/r", ci_paths=["labs/ci/**"])
+    assert len(reasons) == 1 and "exam" in reasons[0] and "CI surface" in reasons[0]

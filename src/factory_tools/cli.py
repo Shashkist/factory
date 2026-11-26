@@ -84,6 +84,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="owner/name whose pinned junit-gate.yml and exam-integrity.yml must back the "
         "exam checks (default: %(default)s)",
     )
+    mg.add_argument(
+        "--exam-paths",
+        nargs="+",
+        action="extend",
+        metavar="GLOB",
+        help="globs that replace the tests/ part of the exam rule (as in exam-integrity); "
+        "also holds a PR that changes the exam together with the CI surface",
+    )
+    mg.add_argument(
+        "--ci-paths",
+        nargs="+",
+        action="extend",
+        metavar="GLOB",
+        help="globs that replace the default CI surface (as in exam-integrity)",
+    )
     mg.set_defaults(func=merge_gate.run_command)
     return parser
 
