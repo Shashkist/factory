@@ -365,3 +365,9 @@ in force · factory · 2026-11-25 · revertible
 **Why.** Three rounds showed that a static reading of shell text has no end of spellings. Running the script is the only check that the spelling cannot fool.
 **Alternatives.** Merge after round 3 with the hole left to #91 (the reviewer did not approve, D148). Keep extending the parser (round 4 would find the next spelling).
 **Revert.** Drop the behaviour case; the static checks stand alone as in round 3.
+
+## D34 · #75: the merge gate takes the judge's `--exam-paths` and `--ci-paths` as options; with neither given it behaves as today
+**Decision.** `factory-tools merge-gate` gets the same two options as the exam-integrity judge, `--exam-paths GLOB...` and `--ci-paths GLOB...` (repeatable, each value split on whitespace, the judge's `_globs`). `--exam-paths` is passed to `_is_exam`/`_is_code` for both the per-commit exam-and-code hold and the CI-round count (an all-exam commit is not a round). With `--ci-paths` (or `--exam-paths`) given, the gate also holds, like the judge without `--bootstrap`, when the PR changes the exam together with the CI surface. With neither option, the gate keeps today's defaults and adds no CI-surface hold, so every existing gate case stays as it is. The gate does not read the profile itself: the manager passes the values its client's exam-integrity call uses (for Learning Factory, the profile's `exam` globs).
+**Why.** The criteria ask for options with today's values as defaults or the profile; options mirror the judge exactly, so one set of strings serves both calls. Adding the CI-surface hold only when globs are given keeps criterion 2's "defaults keep every case".
+**Alternatives.** Read `.factory/factory.yaml` in the gate (a second source of truth beside the CI call; a profile has no CI-surface field yet). Always apply the CI-surface hold (changes default behaviour).
+**Revert.** Drop the two options; the gate classifies with the judge's defaults again.
