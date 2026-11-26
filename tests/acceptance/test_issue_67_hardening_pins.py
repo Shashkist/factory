@@ -1004,7 +1004,13 @@ def find_bash() -> str | None:
 BASH = find_bash()
 needs_bash = pytest.mark.skipif(BASH is None, reason="no bash on PATH")
 
-KNOWN_EXPRESSIONS = {"inputs.junit-file": "acceptance.xml"}
+KNOWN_EXPRESSIONS = {
+    "inputs.junit-file": "acceptance.xml",
+    # #91: the gate's first step fails closed on an empty workflow ref; the harness
+    # gives it realistic non-empty values so that guard passes through.
+    "job.workflow_repository": "Shashkist/factory",
+    "job.workflow_sha": "0123456789abcdef0123456789abcdef01234567",
+}
 
 
 def substitute(value: str, result: str) -> str:
