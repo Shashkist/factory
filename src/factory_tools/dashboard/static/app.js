@@ -556,7 +556,12 @@ function renderLanes(d, rerender) {
   var root = arr(d.crew)[0];
   var mgr = el("div", null, "lane-manager");
   mgr.appendChild(el("b", "🧭 Manager "));
-  if (root) {
+  var rr = d.runner || {};
+  var idle = S(rr.state) === "idle";   // between passes: the crew block is the ended pass's, not live
+  if (idle) {
+    mgr.appendChild(el("span", joined(["Idle", rr.result ? "last pass: " + S(rr.result) : "",
+      rr.pass_ended ? "ended " + agoAt(rr.pass_ended) : ""]), "muted"));
+  } else if (root) {
     mgr.appendChild(lel("span", null, "live-dot", { "data-state": S(root.state) }));
     mgr.appendChild(el("span", " " + (CREW_STATES[root.state] || S(root.state)) +
       (root.tool ? " · now: " + S(root.tool) + (root.label ? " “" + S(root.label) + "”" : "") : "")));
@@ -564,6 +569,18 @@ function renderLanes(d, rerender) {
     mgr.appendChild(el("span", runnerText(d.runner || {}), "muted"));
   }
   sec.appendChild(mgr);
+  if (idle) {   // the lanes of an ended pass are history: one short list, no live lanes
+    if (lanes.length) {
+      var last = el("div", null, "lane-last");
+      last.appendChild(el("b", "Last pass: "));
+      lanes.forEach(function (l, i) {
+        last.appendChild(el("span", (i ? " · " : "") + (l.shipped ? "✓ " : "⏸ ") + laneLabel(l.repo, l.issue) + " " + l.title +
+          (l.pr ? " (PR #" + S(l.pr.p.number) + ")" : "") + (l.shipped ? " shipped" : " paused")));
+      });
+      sec.appendChild(last);
+    }
+    return sec;
+  }
   var nRun = lanes.filter(function (l) { return l.running; }).length;
   var nDone = lanes.filter(function (l) { return l.shipped; }).length;
   sec.appendChild(el("div", joined([lanes.length + " task" + (lanes.length === 1 ? "" : "s") + " in this pass",

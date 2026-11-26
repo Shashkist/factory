@@ -37,10 +37,10 @@ def snapshot() -> dict[str, Any]:
     }
 
 
-def render(tmp_path: Path) -> dict[str, Any]:
+def render(tmp_path: Path, runner: dict[str, Any] | None = None) -> dict[str, Any]:
     node = shutil.which("node")
     assert node
-    live = {"generated_at": "2026-11-24T11:59:30+00:00", "schema": 1, "runner": {"state": "running"},
+    live = {"generated_at": "2026-11-24T11:59:30+00:00", "schema": 1, "runner": runner or {"state": "running"},
             "issues": [{"issue": 7, "repo": "", "title": "host lane", "station": "build"}],
             "agents": [], "workers": [], "crew": [], "log": []}
     sc = tmp_path / "s.json"
@@ -101,3 +101,9 @@ def test_the_bar_has_one_tab_per_repository_with_the_host_selected(step: dict[st
     assert [text(t) for t in tabs] == ["Learning_factory 1", "factory 1"]
     assert [t["a"].get("aria-current") for t in tabs] == ["page", None]
     assert [t["a"]["href"] for t in tabs] == ["#/Learning_factory", "#/factory"]
+
+
+def test_an_idle_runner_without_a_pass_end_still_shows_the_lanes_as_last_pass(tmp_path: Path) -> None:
+    live = text(render(tmp_path, {"state": "idle"})["live"])
+    assert "Last pass:" in live and "#7 host lane" in live
+    assert "working" not in live.lower()
