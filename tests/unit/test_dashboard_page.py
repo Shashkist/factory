@@ -178,3 +178,31 @@ def test_the_crew_of_an_ended_pass_is_not_counted_as_working(tmp_path: Path) -> 
 def test_a_live_pass_keeps_its_crew_working(tmp_path: Path) -> None:
     step = render(tmp_path, {"state": "running", "pass_started": "2026-11-24T08:55:00+00:00"}, crew=BUSY_CREW)
     assert "2 working" in text(step["live"])
+
+
+def open_step_agent() -> dict[str, Any]:
+    return {"id": "a1", "role": "implementer", "state": "running", "station": "build", "last": "2026-11-24T11:58:00+00:00",
+            "substeps": [{"issue": 7, "repo": "", "title": "host lane", "station": "build", "substep": "implement", "status": "start",
+                          "at": "2026-11-24T11:58:00+00:00", "started": "2026-11-24T11:58:00+00:00", "detail": ""}]}
+
+
+@pytest.mark.parametrize("runner", [
+    {"state": "idle"},
+    {"state": "idle", "pass_ended": "2026-11-24T09:25:00+00:00", "result": "ok"}])
+def test_an_ended_pass_lane_has_no_open_step_even_with_a_fresh_agent_step(tmp_path: Path, runner: dict[str, Any]) -> None:
+    step = render(tmp_path, runner, agents=[open_step_agent()])
+    lane = text(nodes(step, "lane")[0])
+    assert "now:" not in lane and "⏳" not in lane and "working" not in lane.lower()
+    assert "last:" in lane
+
+
+def test_the_manager_row_of_a_budget_pause_names_the_runner_state(tmp_path: Path) -> None:
+    step = render(tmp_path, {"state": "budget", "pass_ended": "2026-11-24T09:25:00+00:00", "result": "ok"})
+    mgr = text(nodes(step, "lane-manager")[0])
+    assert "Daily budget used" in mgr and "Idle" not in mgr
+
+
+def test_a_waiting_crew_root_of_an_ended_pass_is_settled(tmp_path: Path) -> None:
+    crew = [{**BUSY_CREW[0], "state": "waiting", "children": []}]
+    step = render(tmp_path, ENDED, crew=crew)
+    assert "waiting on its agents" not in text(step["live"])

@@ -465,7 +465,7 @@ function passEnded(d) {
 function settleCrew(n) {
   var c = {};
   Object.keys(n).forEach(function (k) { c[k] = n[k]; });
-  if (c.state === "busy" || c.state === "thinking") c.state = "finished";
+  if (c.state === "busy" || c.state === "thinking" || c.state === "waiting") c.state = "finished";
   c.tool = "";
   c.children = arr(n.children).map(settleCrew);
   return c;
@@ -482,7 +482,7 @@ function laneData(d) {
       var r = stepRef(a, s), l = lanes[laneKey(r.repo, r.issue)];
       if (!l) return;
       if (l.agents.indexOf(a) < 0) l.agents.push(a);
-      l.steps.push({ s: s, a: a, open: stepOpen(a, s, arr(a.substeps), d.generated_at) });
+      l.steps.push({ s: s, a: a, open: !ended && stepOpen(a, s, arr(a.substeps), d.generated_at) });
     });
   });
   crewNodes(arr(d.crew).slice(0, 1)).forEach(function (n) {   // the current pass only: older passes' agents confuse the lane
@@ -576,7 +576,7 @@ function renderLanes(d, rerender) {
   var rr = d.runner || {};
   var idle = passEnded(d);   // between passes: the crew block is the ended pass's, not live
   if (idle) {
-    mgr.appendChild(el("span", joined(["Idle", rr.result ? "last pass: " + S(rr.result) : "",
+    mgr.appendChild(el("span", joined([runnerText({ state: rr.state }), rr.result ? "last pass: " + S(rr.result) : "",
       rr.pass_ended ? "ended " + agoAt(rr.pass_ended) : ""]), "muted"));
   } else if (root) {
     mgr.appendChild(lel("span", null, "live-dot", { "data-state": S(root.state) }));
@@ -593,7 +593,7 @@ function renderLanes(d, rerender) {
     nRun + " working in parallel", nDone ? nDone + " shipped" : "", "click a station for its sub-steps"]), "muted"));
   var done = idle ? [] : lanes.filter(function (l) { return l.shipped; });
   lanes.filter(function (l) { return idle || !l.shipped; }).forEach(function (l) {
-    var lane = lel("div", null, "lane", { "data-lane": l.key, "data-running": l.running && !idle ? "1" : "0" });
+    var lane = lel("div", null, "lane", { "data-lane": l.key, "data-running": l.running ? "1" : "0" });
     var head = el("div", null, "lane-head");
     head.appendChild(el("b", laneLabel(l.repo, l.issue) + " " + l.title));
     var pr = l.pr;
@@ -628,7 +628,7 @@ function renderLanes(d, rerender) {
       .sort(function (a, b) { return S(a.s.started) < S(b.s.started) ? -1 : 1; })
       .slice(-LANE_DETAILS)
       .forEach(function (x) { lane.appendChild(el("div", S(x.s.detail), "lane-step-detail muted")); });
-    l.crew.filter(function (n) { return !idle && (n.state === "busy" || n.state === "thinking"); })
+    l.crew.filter(function (n) { return n.state === "busy" || n.state === "thinking"; })
       .forEach(function (n) { lane.appendChild(agentLine(n)); });
     if (laneOpen[l.key]) lane.appendChild(laneDetail(l, laneOpen[l.key]));
     host.appendChild(lane);
