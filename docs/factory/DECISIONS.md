@@ -442,3 +442,6 @@ The exam gets these cases in an exam-only commit on #108 before the code fix.
 **Revert.** Restore the two cases' path from main before PR 0 and drop item 2 from the judge.
 
 **D41 amendment 1 (review of #115).** The #109 exam reverses the defaults case but nothing pins an exam plus a workflow under `--exam-paths` alone (the dropped `test_caller_workflow_is_plain_code_without_ci_paths` ran that way): a judge that ignored the workflow default whenever `--exam-paths` is set would pass every judge exam. Before PR B lands, the #109 exam gets that mode (as the #11 exam does with its mode ids) in an exam-only commit on `exam/109-surface`, and the #65 file docstring is corrected to name `.github/workflows/` as the default CI surface.
+
+
+**D41 amendment 2 (review round 1 of #119).** #109 closes with items 2 and 3 (judge #116, exam #119). Item 1 (a recorded exam commit, refused history rewrites, `docs/ci.md` names the marker) moves to #120, p2, with its own exam. Before #119 lands, its exam gets exam-only cases for the native `[tool.pytest]` table, `pytest.toml` and `.pytest.toml` with code (defaults and `--exam-paths`), and a pyproject pytest-table change followed by a workflow change (refused as CI surface), so no rule #116 added rests on unit tests alone.
