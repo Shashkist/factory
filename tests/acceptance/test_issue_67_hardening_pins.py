@@ -35,22 +35,6 @@ def job(text: str, name: str) -> dict[str, Any]:
     return jobs[name]
 
 
-def script_lines(run: str) -> list[str]:
-    """Commands of a run script: comments dropped, line continuations joined."""
-    lines = [ln for ln in run.splitlines() if not ln.strip().startswith("#")]
-    joined = re.sub(r"\\\n\s*", " ", "\n".join(lines))
-    return [ln.strip() for ln in joined.splitlines() if ln.strip()]
-
-
-def unquote(s: str) -> str:
-    """Quoted strings emptied, so echo text is never read as a command."""
-    return re.sub(r"\"[^\"]*\"|'[^']*'", '""', s)
-
-
-def statements(line: str) -> list[str]:
-    return [p.strip() for p in unquote(line).split(";") if p.strip()]
-
-
 def truthy(value: Any) -> bool:
     return value is not None and str(value).strip().lower() not in ("", "false")
 
@@ -59,37 +43,120 @@ def squash(value: Any) -> str:
     return re.sub(r"\s+", "", str(value))
 
 
-def block_body(lines: list[str], i: int) -> list[str]:
-    """Lines between the `if` at index i and its own matching `fi`."""
-    depth = 1
-    for j in range(i + 1, len(lines)):
-        if re.match(r"if\b", lines[j]):
-            depth += 1
-        elif re.match(r"fi\b", lines[j]):
+def strip_comment(line: str) -> str:
+    """Drop a trailing shell comment (a # outside quotes, at a word start)."""
+    quote = ""
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+            return line[:i].rstrip()
+    return line
+
+
+def script_lines(run: str) -> list[str]:
+    """Logical lines of a run script: comments dropped, continuations joined, and a
+    `then` on its own line appended to the line above it."""
+    joined = re.sub(r"\\\n\s*", " ", run)
+    out: list[str] = []
+    for raw in joined.splitlines():
+        ln = strip_comment(raw.strip()).strip()
+        if not ln:
+            continue
+        if ln == "then" and out:
+            out[-1] += "; then"
+        else:
+            out.append(ln)
+    return out
+
+
+def unquote(s: str) -> str:
+    """Quoted strings emptied, so echo text is never read as a command."""
+    return re.sub(r"\"[^\"]*\"|'[^']*'", '""', s)
+
+
+def split_semicolons(line: str) -> list[str]:
+    parts, cur, quote = [], "", ""
+    for ch in line:
+        if quote:
+            cur += ch
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+            cur += ch
+        elif ch == ";":
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def statements(lines: list[str]) -> list[str]:
+    """Flat statements: split on `;`, `then`/`do` dropped from the front."""
+    out = []
+    for ln in lines:
+        for part in split_semicolons(ln):
+            part = re.sub(r"^(?:then|do)\b\s*", "", part)
+            if part:
+                out.append(part)
+    return out
+
+
+OPENERS = re.compile(r"(?:if|case|for|while|until)\b")
+CLOSERS = re.compile(r"(?:fi|done|esac)\b")
+
+
+def top_level_exit_codes(stmts: list[str], k: int) -> list[int]:
+    """Exit codes of statements that run unconditionally in the main branch of the
+    `if` at index k: nested if/case/loops and elif/else branches are skipped."""
+    depth, alt, codes = 1, False, []
+    for st in stmts[k + 1 :]:
+        if CLOSERS.match(st):
             depth -= 1
             if depth == 0:
-                return lines[i + 1 : j]
+                return codes
+            continue
+        if depth == 1 and re.match(r"(?:elif|else)\b", st):
+            alt = True
+            continue
+        if OPENERS.match(st):
+            depth += 1
+            continue
+        if depth != 1 or alt:
+            continue
+        chain = [c.strip() for c in unquote(st).split("&&")]
+        if all(re.match(r"(?:echo|printf|true)\b", c) for c in chain[:-1]):
+            m = re.fullmatch(r"exit(?:\s+(\d+))?", chain[-1])
+            if m:
+                codes.append(int(m.group(1) or 0))
     raise AssertionError("an if without its fi")
 
 
-def exit_codes(body: list[str]) -> list[int]:
-    codes = []
-    for ln in body:
-        for st in statements(ln):
-            m = re.fullmatch(r"exit(?:\s+(\d+))?", st)
-            if m:
-                codes.append(int(m.group(1) or 0))
-    return codes
-
-
-def fails_in(body: list[str]) -> bool:
-    codes = exit_codes(body)
+def fails_at_top_level(stmts: list[str], k: int) -> bool:
+    codes = top_level_exit_codes(stmts, k)
     return any(c != 0 for c in codes) and 0 not in codes
 
 
 def tail_exits_nonzero(tail: str) -> bool:
     t = unquote(tail).strip()
     return bool(re.fullmatch(r"exit\s+[1-9]\d*|\{.*\bexit\s+[1-9]\d*\s*;?\s*\}", t))
+
+
+def swallows_before(chunks: list[str]) -> str | None:
+    """A trap, `exit 0` or bare `exit` in the given script text (or None)."""
+    for ch in chunks:
+        flat = unquote(ch)
+        if re.search(r"\btrap\b", flat):
+            return f"trap before the check: {ch!r}"
+        if re.search(r"(?<![\w-])exit(?:\s+0+\b|\s*(?:;|$|\}|&|\|))", flat):
+            return f"an exit 0 or bare exit before the check: {ch!r}"
+    return None
 
 
 def run_steps(text: str, jname: str | None = None) -> list[dict[str, Any]]:
@@ -243,14 +310,19 @@ def test_criterion_1_comment_naming_the_judge_elsewhere_stays_green(fname: str) 
 
 def check_base_ref_verified(text: str) -> None:
     lines = script_lines(judge_step(text, INTEGRITY)["run"])
-    judge = max(i for i, ln in enumerate(lines) if "exam_integrity.py" in ln)
-    for i, ln in enumerate(lines[:judge]):
-        if not re.search(r"\bgit\s+(rev-parse|show-ref)\b.*origin/\$\{?BASE_REF\}?", ln):
-            continue
-        if ln.startswith("if !"):
-            if fails_in(block_body(lines, i)):
-                return
-        elif "||" in ln and tail_exits_nonzero(ln.split("||", 1)[1]):
+    stmts = statements(lines)
+    judge = max(i for i, st in enumerate(stmts) if "exam_integrity.py" in st)
+    ref = r"\"?(?:refs/remotes/)?origin/\$(?:BASE_REF|\{BASE_REF\})\"?"
+    git = r"git\s+(?:rev-parse|show-ref)(?:\s+(?:--verify|-q|--quiet))*\s+" + ref
+    redirs = r"(?:\s*>\s*/dev/null)?(?:\s*2>&1)?"
+    if_form = re.compile(r"if\s+!\s+" + git + redirs)
+    or_form = re.compile(git + redirs + r"\s*\|\|\s*(.*)")
+    for i, st in enumerate(stmts[:judge]):
+        if if_form.fullmatch(st) and fails_at_top_level(stmts, i):
+            return
+    for ln in lines[: max(i for i, x in enumerate(lines) if "exam_integrity.py" in x)]:
+        m = or_form.fullmatch(ln)
+        if m and tail_exits_nonzero(m.group(1)):
             return
     raise AssertionError("no check of origin/$BASE_REF that fails the step")
 
@@ -379,25 +451,57 @@ def test_criterion_4_mutation_is_rejected(weak: str) -> None:
 # ------------------------------------ 5. the gate fails unless the exam succeeded
 
 
+def step_if_is_always(value: Any) -> bool:
+    m = re.fullmatch(r"\$\{\{(.*)\}\}", squash(value))
+    return (m.group(1) if m else squash(value)) == "always()"
+
+
 def check_gate_requires_exam_success(text: str) -> None:
     for step in job(text, "gate").get("steps") or []:
         if not step.get("run"):
             continue
         env = step.get("env") or {}
         names = [k for k, v in env.items() if squash(v) == "${{needs.exam.result}}"]
-        if not names or "if" in step or truthy(step.get("continue-on-error")):
+        if not names or truthy(step.get("continue-on-error")):
+            continue
+        if "if" in step and not step_if_is_always(step["if"]):
             continue
         lines = script_lines(step["run"])
+        stmts = statements(lines)
         for var in names:
+            flat = unquote("\n".join(lines))
+            if re.search(r"(?<![\w$])" + var + r"\+?=", flat):
+                continue
+            if re.search(
+                r"\b(?:unset|export|read|declare|local|typeset|readonly|for)\b[^;\n]*\b"
+                + var
+                + r"\b",
+                flat,
+            ):
+                continue
+            if re.search(r"\bprintf\s+-v\s+" + var + r"\b", flat):
+                continue
             ref = r"\"?\$(?:" + var + r"|\{" + var + r"\})\"?"
             val = r"[\"']?success[\"']?"
-            neg = re.compile(r"if\s+\[\[?\s+" + ref + r"\s+!=\s+" + val + r"\s+\]\]?;\s*then")
-            inv = re.compile(r"\[\[?\s+" + ref + r"\s+=\s+" + val + r"\s+\]\]?\s*\|\|\s*(.*)")
+            tests = (  # a test that is false when the result is not success
+                (r"\[\s+" + ref + r"\s+!=\s+" + val + r"\s+\]"),
+                (r"\[\[\s+" + ref + r"\s+!=\s+" + val + r"\s+\]\]"),
+                (r"test\s+" + ref + r"\s+!=\s+" + val),
+            )
+            ok_tests = (  # a test that is true when the result is success
+                (r"\[\s+" + ref + r"\s+==?\s+" + val + r"\s+\]"),
+                (r"\[\[\s+" + ref + r"\s+==?\s+" + val + r"\s+\]\]"),
+                (r"test\s+" + ref + r"\s+==?\s+" + val),
+            )
+            neg = re.compile(r"if\s+(?:" + "|".join(tests) + ")")
+            inv = re.compile(r"(?:" + "|".join(ok_tests) + r")\s*\|\|\s*(.*)")
+            for i, st in enumerate(stmts):
+                if neg.fullmatch(st) and fails_at_top_level(stmts, i):
+                    if swallows_before(stmts[:i]) is None:
+                        return
             for i, ln in enumerate(lines):
-                if neg.fullmatch(ln) and fails_in(block_body(lines, i)):
-                    return
                 m = inv.fullmatch(ln)
-                if m and tail_exits_nonzero(m.group(1)):
+                if m and tail_exits_nonzero(m.group(1)) and swallows_before(lines[:i]) is None:
                     return
     raise AssertionError("the gate does not fail unless needs.exam.result is success")
 
@@ -592,3 +696,189 @@ def test_criterion_6_safe_spelling_stays_green(name: str) -> None:
     }[name]
     assert mutated != text
     check_autoload_default_on(mutated)
+
+
+# ------------------------------- round 2: top-level exits, reassigned result, spellings
+
+IND = "          "
+IND2 = "            "
+
+
+def swap_exit(blk: str, new: str) -> str:
+    """The block with its `exit 1` line replaced by new (lines, already indented)."""
+    return blk.replace(IND2 + "exit 1\n", new, 1)
+
+
+NESTED_EXIT = {
+    "nested_if": IND2 + 'if [ -n "$CI" ]; then\n' + IND2 + "  exit 1\n" + IND2 + "fi\n",
+    "under_elif": IND2 + "true\n" + IND + 'elif [ -n "$CI" ]; then\n' + IND2 + "exit 1\n",
+    "under_else": IND2 + "true\n" + IND + "else\n" + IND2 + "exit 1\n",
+    "nested_case": IND2 + 'case "$CI" in\n' + IND2 + "  x) exit 1 ;;\n" + IND2 + "esac\n",
+    "nested_loop": IND2 + "for i in 1; do\n" + IND2 + "  exit 1\n" + IND2 + "done\n",
+}
+
+
+@pytest.mark.parametrize("name", list(NESTED_EXIT))
+def test_criterion_5_exit_that_is_not_top_level_is_rejected(name: str) -> None:
+    text = workflow_text(GATE)
+    blk = result_block(text)
+    mutated = text.replace(blk, swap_exit(blk, NESTED_EXIT[name]))
+    assert mutated != text
+    with pytest.raises(AssertionError):
+        check_gate_requires_exam_success(mutated)
+
+
+RESULT_REWRITES = {
+    "assign_before": IND + "EXAM_RESULT=success\n",
+    "assign_quoted": IND + 'EXAM_RESULT="success"\n',
+    "export_before": IND + "export EXAM_RESULT=success\n",
+    "unset_before": IND + "unset EXAM_RESULT\n",
+    "read_before": IND + "read -r EXAM_RESULT < /dev/null\n",
+    "declare_before": IND + "declare EXAM_RESULT=success\n",
+    "local_before": IND + "local EXAM_RESULT=success\n",
+    "printf_v": IND + "printf -v EXAM_RESULT success\n",
+}
+
+
+@pytest.mark.parametrize("name", list(RESULT_REWRITES))
+def test_criterion_5_reassigned_result_is_rejected(name: str) -> None:
+    text = workflow_text(GATE)
+    blk = result_block(text)
+    mutated = text.replace(blk, RESULT_REWRITES[name] + blk)
+    with pytest.raises(AssertionError):
+        check_gate_requires_exam_success(mutated)
+    after = text.replace(blk, blk + RESULT_REWRITES[name])  # anywhere in the script
+    with pytest.raises(AssertionError):
+        check_gate_requires_exam_success(after)
+
+
+EARLY_EXITS = [
+    "exit 0",
+    "exit",
+    "trap 'exit 0' EXIT",
+    "trap : EXIT",
+    '[ -n "$CI" ] && exit 0',
+    'if [ -n "$CI" ]; then exit 0; fi',
+    "true && exit 0",
+]
+
+
+@pytest.mark.parametrize("cmd", EARLY_EXITS)
+def test_criterion_5_early_exit_or_trap_before_the_check_is_rejected(cmd: str) -> None:
+    text = workflow_text(GATE)
+    blk = result_block(text)
+    with pytest.raises(AssertionError):
+        check_gate_requires_exam_success(text.replace(blk, IND + cmd + "\n" + blk))
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["mismatched_close", "mismatched_open", "step_if_failure", "step_if_success"],
+)
+def test_criterion_5_other_round_2_mutations_are_rejected(name: str) -> None:
+    text = workflow_text(GATE)
+    mutated = {
+        "mismatched_close": text.replace(RESULT_COND, cond('[ "$EXAM_RESULT" != "success" ]]')),
+        "mismatched_open": text.replace(RESULT_COND, cond('[[ "$EXAM_RESULT" != "success" ]')),
+        "step_if_failure": text.replace(RESULT_STEP, RESULT_STEP + "        if: failure()\n"),
+        "step_if_success": text.replace(
+            RESULT_STEP, RESULT_STEP + "        if: ${{ success() }}\n"
+        ),
+    }[name]
+    assert mutated != text
+    with pytest.raises(AssertionError):
+        check_gate_requires_exam_success(mutated)
+
+
+@pytest.mark.parametrize(
+    "respell",
+    [
+        lambda t, b: t.replace(b, swap_exit(b, IND2 + "exit 1  # fail the gate\n")),
+        lambda t, b: t.replace(b, swap_exit(b, IND2 + "echo bye && exit 1\n")),
+        lambda t, b: t.replace(
+            RESULT_COND, IND + 'if [ "$EXAM_RESULT" != "success" ]\n' + IND + "then\n"
+        ),
+        lambda t, b: t.replace(RESULT_COND, cond('test "$EXAM_RESULT" != success')),
+        lambda t, b: t.replace(b, IND + '[ "$EXAM_RESULT" == success ] || exit 1\n'),
+        lambda t, b: t.replace(b, IND + '[[ "$EXAM_RESULT" == success ]] || exit 1\n'),
+        lambda t, b: t.replace(b, IND + 'test "$EXAM_RESULT" = success || exit 1\n'),
+        lambda t, b: t.replace(RESULT_STEP, RESULT_STEP + "        if: always()\n"),
+        lambda t, b: t.replace(RESULT_STEP, RESULT_STEP + "        if: ${{ always() }}\n"),
+        lambda t, b: t.replace(
+            b, swap_exit(b, IND2 + "if true; then echo hi; fi\n" + IND2 + "exit 1\n")
+        ),
+        lambda t, b: t.replace(
+            b,
+            swap_exit(
+                b, IND2 + 'if [ -n "$CI" ]; then echo a; else echo b; fi\n' + IND2 + "exit 1\n"
+            ),
+        ),
+    ],
+    ids=[
+        "comment",
+        "echo-and-exit",
+        "then-next-line",
+        "test-builtin",
+        "inverted-double-equals",
+        "inverted-dbl-bracket-double-equals",
+        "inverted-test",
+        "step-if-always",
+        "step-if-always-expr",
+        "one-line-if",
+        "one-line-if-else",
+    ],
+)
+def test_criterion_5_round_2_safe_spelling_stays_green(respell: Any) -> None:
+    text = workflow_text(GATE)
+    mutated = respell(text, result_block(text))
+    assert mutated != text
+    check_gate_requires_exam_success(mutated)
+
+
+# criterion 2, round 2
+
+BASE_COND = '          if ! git rev-parse --verify -q "origin/$BASE_REF" > /dev/null; then\n'
+
+
+@pytest.mark.parametrize("name", list(NESTED_EXIT))
+def test_criterion_2_exit_that_is_not_top_level_is_rejected(name: str) -> None:
+    text = workflow_text(INTEGRITY)
+    blk = base_block(text)
+    mutated = text.replace(blk, swap_exit(blk, NESTED_EXIT[name]))
+    assert mutated != text
+    with pytest.raises(AssertionError):
+        check_base_ref_verified(mutated)
+
+
+@pytest.mark.parametrize(
+    "new_cond",
+    [
+        'if ! git rev-parse --verify -q "origin/$BASE_REF" > /dev/null && false',
+        'if ! git rev-parse --verify -q "origin/$BASE_REF" > /dev/null || true',
+        'if ! git rev-parse --verify -q "origin/$BASE_REF" > /dev/null | cat',
+        'if ! git rev-parse --verify -q "origin/$OTHER_REF" > /dev/null',
+        'if git rev-parse --verify -q "origin/$BASE_REF" > /dev/null',
+        'if ! git log -q "origin/$BASE_REF" > /dev/null',
+    ],
+    ids=["and-false", "or-true", "piped", "other-ref", "not-negated", "other-git-command"],
+)
+def test_criterion_2_condition_must_fullmatch(new_cond: str) -> None:
+    text = workflow_text(INTEGRITY)
+    assert BASE_COND in text
+    with pytest.raises(AssertionError):
+        check_base_ref_verified(text.replace(BASE_COND, IND + new_cond + "; then\n"))
+
+
+@pytest.mark.parametrize(
+    "new_cond",
+    [
+        'if ! git rev-parse --verify -q "origin/${BASE_REF}" > /dev/null',
+        'if ! git rev-parse --verify origin/$BASE_REF',
+        'if ! git rev-parse --verify -q "origin/$BASE_REF" > /dev/null 2>&1',
+        'if ! git show-ref --verify --quiet "refs/remotes/origin/$BASE_REF"',
+    ],
+    ids=["braces", "unquoted", "stderr", "show-ref-quiet"],
+)
+def test_criterion_2_round_2_safe_spelling_stays_green(new_cond: str) -> None:
+    text = workflow_text(INTEGRITY)
+    check_base_ref_verified(text.replace(BASE_COND, IND + new_cond + "; then\n"))
