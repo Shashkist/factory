@@ -24,6 +24,8 @@ CI_FILE = ".github/workflows/ci.yml"
 RAW = "Accept: application/vnd.github.raw+json"
 JOB_URL = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/actions/runs/(\d+)/job/(\d+)/?$")
 VERDICT = re.compile(r"^Review round (\d+): (APPROVE|CHANGES) at ([0-9a-fA-F]{7,40})\s*$")
+D_HEADING = re.compile(r"^## D(\d+)\b")
+DECISIONS = "docs/factory/DECISIONS.md"
 CLOSES = re.compile(r"^\s*closes\s+#(\d+)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
@@ -277,6 +279,42 @@ def _verdicts(comments: list[dict[str, Any]], author: str) -> list[tuple[int, st
     return found
 
 
+def _d_entries(path: str) -> list[tuple[int, str]]:
+    """The D-entries of a decision log: `## D<n>` to the next `## ` line. Missing file: none."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    entries: list[tuple[int, list[str]]] = []
+    current: list[str] | None = None
+    for line in lines:
+        m = D_HEADING.match(line)
+        if m:
+            current = []
+            entries.append((int(m.group(1)), current))
+        elif line.startswith("## "):
+            current = None
+        if current is not None:
+            current.append(line)
+    return [(n, "\n".join(body)) for n, body in entries]
+
+
+def _decided_rounds(
+    entries: list[tuple[int, str]], refs: set[int], rounds: list[int]
+) -> dict[int, list[int]]:
+    """For each round, the ids of the D-entries naming this PR (or an issue it closes) and it."""
+    ref = re.compile("#(?:" + "|".join(str(n) for n in sorted(refs)) + r")\b")
+    found: dict[int, list[int]] = {}
+    for n, text in entries:
+        if not ref.search(text):
+            continue
+        for k in rounds:
+            if re.search(rf"\bround {k}\b", text, re.IGNORECASE):
+                found.setdefault(k, []).append(n)
+    return found
+
+
 def _commit_files(run: claims.Run, repo: str | None, oid: str) -> dict[str, Any]:
     """The commit as `gh api` returns it.
 
@@ -361,8 +399,14 @@ def decide(
     workflows_repo: str = WORKFLOWS_REPO,
     exam_paths: list[str] | None = None,
     ci_paths: list[str] | None = None,
+    decisions: str = DECISIONS,
+    notes: list[str] | None = None,
 ) -> list[str]:
-    """The HOLD reasons for a pull request; empty means MERGE."""
+    """The HOLD reasons for a pull request; empty means MERGE.
+
+    Past the review-round limit (D36) every extra round needs a D-entry; the entries matched are
+    appended to `notes`.
+    """
     gh = claims.scoped(run, repo)
     fields = (
         "author,body,headRefOid,isCrossRepository,commits,statusCheckRollup,comments,"
@@ -381,23 +425,50 @@ def decide(
     for_head = [v for v in verdicts if head.startswith(v[2])]
     if not for_head or for_head[-1][1] != "APPROVE":
         reasons.append(f"no APPROVE verdict for head {head[:7]}")
-    rounds = max((v[0] for v in verdicts), default=0)
-    if rounds > MAX_REVIEW_ROUNDS:
-        reasons.append(f"review round {rounds} is over the limit of {MAX_REVIEW_ROUNDS}")
+    extra = [v for v in verdicts if v[0] > MAX_REVIEW_ROUNDS]
+    if extra:
+        refs = {int(pr_number)}
+        refs |= {int(r["number"]) for r in pr.get("closingIssuesReferences") or []}
+        refs |= {int(n) for n in CLOSES.findall(pr.get("body") or "")}
+        numbers = sorted({v[0] for v in extra})
+        decided = _decided_rounds(_d_entries(decisions), refs, numbers)
+        for k in numbers:
+            if k not in decided:
+                reasons.append(
+                    f"review round {k} is over the limit of {MAX_REVIEW_ROUNDS} "
+                    "and no D-entry names it"
+                )
+        for v in extra[:-1]:
+            if v[1] != "CHANGES":
+                reasons.append(f"review round {v[0]} was not a CHANGES verdict, more followed")
+        if notes is not None:
+            by_entry: dict[int, list[int]] = {}
+            for k, ids in decided.items():
+                for n in ids:
+                    by_entry.setdefault(n, []).append(k)
+            notes += [
+                f"D{n} decides " + ", ".join(f"round {k}" for k in sorted(ks))
+                for n, ks in sorted(by_entry.items())
+            ]
 
     reasons += _commit_reasons(pr, run, repo, exam_paths, ci_paths)
     return reasons + _claim_reasons(pr, session, gh)
 
 
 def run_command(args: Any) -> int:
+    notes: list[str] = []
     reasons = decide(
         args.pr, args.session, args.repo, args.author, args.exam_gate,
         workflows_repo=args.workflows_repo,
         exam_paths=_globs(args.exam_paths),
         ci_paths=_globs(args.ci_paths),
+        decisions=args.decisions,
+        notes=notes,
     )
     for r in reasons:
         print("HOLD: " + r)
     if not reasons:
+        for note in notes:
+            print(note)
         print("MERGE")
     return 1 if reasons else 0

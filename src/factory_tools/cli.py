@@ -99,6 +99,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="GLOB",
         help="globs that replace the default CI surface (as in exam-integrity)",
     )
+    mg.add_argument(
+        "--decisions",
+        default=merge_gate.DECISIONS,
+        metavar="PATH",
+        help="the decision log whose D-entries decide review rounds past the limit, D36 "
+        "(default: %(default)s; a missing file has no entries)",
+    )
     mg.set_defaults(func=merge_gate.run_command)
     return parser
 

@@ -326,3 +326,27 @@ def test_commit_reasons_ci_surface_hold_only_when_a_glob_is_given():
     assert merge_gate._commit_reasons(pr, run, "o/r") == []
     reasons = merge_gate._commit_reasons(pr, run, "o/r", ci_paths=["labs/ci/**"])
     assert len(reasons) == 1 and "exam" in reasons[0] and "CI surface" in reasons[0]
+
+
+# ---- D36 (#102): the decision log ----
+
+
+def test_d_entries_run_to_the_next_level_two_heading(tmp_path):
+    log = tmp_path / "D.md"
+    log.write_text(
+        "# Log\nPR #9 round 3\n\n## D1 a\nPR #9 round 3\n### sub\nmore\n"
+        "## Other\nround 4\n## D2 b\nx\n",
+        encoding="utf-8",
+    )
+    entries = merge_gate._d_entries(str(log))
+    assert [n for n, _ in entries] == [1, 2]
+    assert "more" in entries[0][1] and "round 4" not in entries[0][1]
+
+
+def test_missing_log_has_no_entries(tmp_path):
+    assert merge_gate._d_entries(str(tmp_path / "none.md")) == []
+
+
+def test_round_and_pr_match_with_word_boundaries():
+    entries = [(1, "## D1\nPR #9 Round 3"), (2, "## D2\n#90 round 3"), (3, "## D3\n#5 round 30")]
+    assert merge_gate._decided_rounds(entries, {9, 5}, [3]) == {3: [1]}
