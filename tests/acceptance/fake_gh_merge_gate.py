@@ -8,8 +8,9 @@ Run as: python fake_gh_merge_gate.py <gh args>, with FAKE_GH_STATE pointing at a
          "commits": {"<oid>": ["path", ...]},
          "issues": {"5": [<comment objects>]}}}}
 
-* `pr view <n> ... --json <fields>` returns ONE object with every stored field, whatever
-  fields were asked for (the gate must not depend on --jq or on the field list).
+* `pr view <n> ... --json <fields>` (`<n>` may also be `#<n>` or a pull request URL) returns ONE
+  object with every stored field plus `number`, whatever fields were asked for
+  (the gate must not depend on --jq or on the field list).
 * `api repos/<owner>/<repo>/commits/<oid>` returns {"files": [{"filename": ...}]}. Like the
   real `gh api` (which has no -R flag), a full path resolves to the repository named in the
   path (case-insensitive, with or without -R); an unknown repository fails. Only the
@@ -101,12 +102,14 @@ if (
 
 if args[:2] == ["pr", "view"]:
     state = lookup(repo)
-    pr = state["prs"].get(args[2])
+    # Like the real gh: `9`, `#9` and a pull request URL name the same pull request (#102).
+    key = args[2].rstrip("/").rsplit("/", 1)[-1].lstrip("#")
+    pr = state["prs"].get(key)
     if pr is None:
         fail("no pull request " + args[2])
     s["resolved"] = repo
     save()
-    print(json.dumps(pr))
+    print(json.dumps({"number": int(key), **pr}))
 elif group == "api":
     path = next((a for a in args[1:] if a.startswith("repos/")), None)
     if path is None:
