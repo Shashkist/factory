@@ -84,6 +84,9 @@ jobs:
           persist-credentials: false
       # Runs the file directly (the same code as python -m factory_tools.ci.incident)
       # so a broken package __init__ cannot stop it.
+      # The || fallback also runs when the tool found the open incident but its
+      # gh issue comment failed, so it can open a duplicate incident. Accepted:
+      # a duplicate beats a missed incident.
       - name: Comment on or open the incident issue
         run: |
           python3 .factory-tools/src/factory_tools/ci/incident.py --workflow "$WF_NAME" --run-url "$RUN_URL" || \
