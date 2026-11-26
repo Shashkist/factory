@@ -384,6 +384,13 @@ def _decide_rounds(monkeypatch, tmp_path, rounds):
     # a number going back after the first round past the limit
     [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "CHANGES", R_OLD), (2, "APPROVE", R_HEAD)],
     [(3, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (4, "APPROVE", R_HEAD)],
+    # a verdict labelled below the limit just before the first extra round
+    [(1, "APPROVE", R_OLD), (3, "APPROVE", R_HEAD)],
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (1, "APPROVE", R_OLD), (3, "APPROVE", R_HEAD)],
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (0, "APPROVE", R_OLD), (3, "APPROVE", R_HEAD)],
+    # four reviews with only round 3 decided
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (1, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
 ])
 def test_rounds_past_the_limit_hold_on_a_late_approve_or_a_backward_number(
     monkeypatch, tmp_path, rounds
@@ -394,6 +401,8 @@ def test_rounds_past_the_limit_hold_on_a_late_approve_or_a_backward_number(
 @pytest.mark.parametrize("rounds", [
     [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
     [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "CHANGES", R_OLD), (4, "APPROVE", R_HEAD)],
+    [(1, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
+    [(3, "APPROVE", R_HEAD)],
 ])
 def test_decided_rounds_past_the_limit_merge(monkeypatch, tmp_path, rounds):
     assert _decide_rounds(monkeypatch, tmp_path, rounds) == []
