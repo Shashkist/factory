@@ -98,8 +98,8 @@ function stamp(iso) {
 
 // "4 min ago (17 Nov 00:12)"
 function agoAt(iso) {
-  var at = stamp(iso);
-  return ago(iso) + (at ? " (" + at + ")" : "");
+  var when = stamp(iso);
+  return ago(iso) + (when ? " (" + when + ")" : "");
 }
 
 function showAge() {
@@ -194,9 +194,9 @@ function render(s) {
   var health = document.getElementById("health");
   health.textContent = "";
   [selRepo].filter(function (r) { return runs[r]; }).forEach(function (repo) {   // runs are nested by repository, then workflow
-    var names = ["CI", "Deploy", "Smoke"].filter(function (n) { return runs[repo][n]; });
-    if (!names.length) names = [""];
-    names.forEach(function (name) {
+    var kinds = ["CI", "Deploy", "Smoke"].filter(function (n) { return runs[repo][n]; });
+    if (!kinds.length) kinds = [""];
+    kinds.forEach(function (name) {
       var li = el("li");
       runLine(li, name || "CI", runs[repo][name]);
       health.appendChild(li);
@@ -256,14 +256,14 @@ function load() {
 // ---- Live section: live.json, polled every 3 s. Every value is untrusted text. ----
 
 var LIVE_STATIONS = ["plan", "exam", "build", "check", "ship"];
-var LIVE_ICONS = { start: "⏳", done: "✅", fail: "❌", wait: "⏸", skip: "⏭", stopped: "⏹" };
+var LIVE_ICONS = Object.assign(Object.create(null), { start: "⏳", done: "✅", fail: "❌", wait: "⏸", skip: "⏭", stopped: "⏹" });
 var LIVE_OFFLINE_MS = 2 * 60 * 1000;
 var LIVE_IDLE_OFFLINE_MS = 35 * 60 * 1000;   // the runner polls every 30 min while it is not running
 var LIVE_QUIET = { idle: 1, paused: 1, budget: 1 };
 var LIVE_LOG_MAX = 60;
-var LIVE_ROLE_ICONS = { manager: "🧭", "exam-writer": "📝", implementer: "🔨", reviewer: "🔍",
-  researcher: "🔬", scribe: "✍️", agent: "🤖" };
-var LIVE_ENDED = { done: 1, failed: 1, stopped: 1, ended: 1 };
+var LIVE_ROLE_ICONS = Object.assign(Object.create(null), { manager: "🧭", "exam-writer": "📝", implementer: "🔨",
+  reviewer: "🔍", researcher: "🔬", scribe: "✍️", agent: "🤖" });
+var LIVE_ENDED = Object.assign(Object.create(null), { done: 1, failed: 1, stopped: 1, ended: 1 });
 var lastLive = null;
 var lastRaw = null;
 var livePending = false;
@@ -302,7 +302,7 @@ function runnerText(r) {
       "pass " + r.pass_no + (r.budget === null || r.budget === undefined ? "" : " of " + r.budget);
     return joined(["Running", pass, r.pass_started ? elapsed(r.pass_started) : "", S(r.note)]);
   }
-  var names = { idle: "Idle", paused: "Paused", budget: "Daily budget used" };
+  var names = Object.assign(Object.create(null), { idle: "Idle", paused: "Paused", budget: "Daily budget used" });
   return joined([names[s] || s, S(r.note)]);
 }
 
@@ -402,8 +402,8 @@ function crewRef(title, d) {   // "#12" is the host's issue; "factory#1" names a
   for (var k = 0; k < repos.length; k++) {   // else the short name right before the reference: "factory #53", "Factory PR #53", "factory issue #53"
     var nm = shortRepo(repos[k] || "").replace(/[^\w]/g, "\\$&");
     if (!nm) continue;
-    var at = new RegExp("(^|[^\\w-])" + nm + "(\\s+(?:PR|issue))?\\s*#(\\d+)", "i").exec(S(title));
-    if (at && Number(at[3]) === issue) return { repo: repos[k], issue: issue };
+    var hit = new RegExp("(^|[^\\w-])" + nm + "(\\s+(?:PR|issue))?\\s*#(\\d+)", "i").exec(S(title));
+    if (hit && Number(hit[3]) === issue) return { repo: repos[k], issue: issue };
   }
   return { repo: "", issue: issue };   // no prefix, or "PR#547": not a repository name, so the host's issue
 }
@@ -502,8 +502,8 @@ function laneData(d) {
     l.running = !ended && (busy.length > 0 || l.agents.some(function (a) { return agentLive(a, d.generated_at) && latestKeys(a).indexOf(l.key) >= 0; }));
     var cur = LIVE_STATIONS.indexOf(l.station);
     busy.forEach(function (n) {   // an agent at work is the strongest evidence of where the task is
-      var at = LIVE_STATIONS.indexOf(ROLE_STATION[S(n.type)] || "");
-      if (at > cur) cur = at;
+      var idx = LIVE_STATIONS.indexOf(ROLE_STATION[S(n.type)] || "");
+      if (idx > cur) cur = idx;
     });
     l.cur = cur;
     l.pr = prFor(l.issue, canonRepo(l.repo));   // only this repository's pull requests
@@ -769,7 +769,7 @@ function renderLive(full) {
   box.appendChild(renderLanes(d, function () { renderLive(full); }));
 
   var line = el("div", null, "live-line");
-  var at = {};
+  var at = Object.create(null);
   LIVE_STATIONS.forEach(function (name) {
     var st = lel("div", null, "live-station", { "data-live-station": name });
     st.appendChild(el("b", name.charAt(0).toUpperCase() + name.slice(1)));
@@ -787,7 +787,8 @@ function renderLive(full) {
   var loose = [];
   arr(full.workers).forEach(function (w) {   // matched on the full live data: workers carry no repository
     var same = arr(full.agents).filter(function (a) { return a.state === "running" && a.role === w.role; });
-    if (same.length === 1) (ownWorkers[same[0].id] = ownWorkers[same[0].id] || []).push(w);
+    var old = same.length === 1 && w.state === "finished" && Date.parse(w.started) < Date.parse(same[0].started) - 60000;   // a finished worker of an earlier round
+    if (same.length === 1 && !old) (ownWorkers[same[0].id] = ownWorkers[same[0].id] || []).push(w);
     else loose.push(w);
   });
   agents.forEach(function (a) { station(a.station).appendChild(agentCard(a, titles, ownWorkers[a.id] || [], d.generated_at)); });
@@ -815,8 +816,14 @@ function renderLive(full) {
   box.appendChild(fold("log", "Log: the last " + Math.min(arr(d.log).length, LIVE_LOG_MAX) + " steps, newest first", log, false));
 
   var body = document.getElementById("live-body");
+  var oldLog = body.querySelector(".live-log");
+  var top = oldLog ? oldLog.scrollTop : 0;
   body.textContent = "";
   body.appendChild(box);
+  if (top) {
+    log.scrollTop = top;
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(function () { log.scrollTop = top; });
+  }
 }
 
 function showOffline() {
@@ -828,7 +835,7 @@ function showOffline() {
   // would show its last state in every step.
   var banner = el("p", "Laptop offline or asleep: showing the last state received.", "live-offline");
   banner.id = "live-offline";
-  banner.hidden = isNaN(t) || Date.now() - t <= (quiet(lastLive) ? LIVE_IDLE_OFFLINE_MS : LIVE_OFFLINE_MS);
+  banner.hidden = !isNaN(t) && Date.now() - t <= (quiet(lastLive) ? LIVE_IDLE_OFFLINE_MS : LIVE_OFFLINE_MS);
   var old = document.getElementById("live-offline");
   if (old) old.remove();
   var body = document.getElementById("live-body");
@@ -836,7 +843,7 @@ function showOffline() {
 }
 
 function pollLive() {
-  if (livePending) return;
+  if (livePending || document.hidden) return;
   livePending = true;
   var ctl = typeof AbortController === "function" ? new AbortController() : null;
   var timer = ctl ? setTimeout(function () { ctl.abort(); }, 10000) : null;
@@ -849,7 +856,6 @@ function pollLive() {
       if (raw === lastRaw) return;
       var d = JSON.parse(raw);
       if (!d || typeof d !== "object" || d.schema !== 1) throw new Error("not live.json");
-      if (lastLive && Date.parse(d.generated_at) < Date.parse(lastLive.generated_at)) return;
       renderLive(d);
       lastLive = d;
       lastRaw = raw;
@@ -872,5 +878,6 @@ window.addEventListener("hashchange", function () {
 load();
 pollLive();
 setInterval(pollLive, 3000);
+document.addEventListener("visibilitychange", function () { if (!document.hidden) pollLive(); });
 setInterval(load, 5 * 60 * 1000);
 setInterval(showAge, 5 * 1000);
