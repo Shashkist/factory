@@ -377,3 +377,20 @@ in force · factory · 2026-11-25 · revertible
 **Why.** The exam change and `ci.yml` may never share a PR (the exam-integrity CI-surface rule), as in D26. Pinning to a release is what `docs/ci.md` tells clients, so our own CI runs exactly what they run.
 **Alternatives.** Keep following an arbitrary `main` SHA (our CI would test something no client pins). One PR (refused by exam integrity).
 **Revert.** Move the pin back to any full `main` SHA; D25 as written.
+
+## D36 · Review rounds past the limit: allowed when each extra round is decided and a fresh reviewer approves (owner, O27)
+in force · owner · 2026-11-26 · revertible
+
+**Decision.** The owner delegated O27 to an owner session, which chose option (b). The merge gate may merge a PR whose review rounds exceed the profile limit only when all of these hold:
+- every round past the limit was asked for by a CHANGES verdict and has a D-entry in which the manager decides what that round fixes;
+- the latest verdict is APPROVE from a fresh reviewer on the exact head commit;
+- all required checks on that head are green;
+- the usual exam-integrity rules hold.
+
+Otherwise the round limit still holds the PR. Moving commits to a new PR to reset the count stays refused. factory PR #90 (#67) met every condition (rounds 3 and 4 backed by D32 and D33, round 4 APPROVE at e9874e1, 4 checks green) and was merged by the owner session under this rule.
+
+**Why.** The round limit stops endless review loops; it should not park a decided, approved, green PR on the owner.
+
+**Alternatives.** (a) The owner merges each such PR by hand: it comes back every time.
+
+**Revert.** Drop the exception from the gate; the limit holds again.
