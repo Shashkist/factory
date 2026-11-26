@@ -412,3 +412,5 @@ Otherwise the round limit still holds the PR. Moving commits to a new PR to rese
 **Why.** Site hooks change how the exam runs, exactly like a `conftest.py`; treating them as exam keeps one rule for everything that steers the exam.
 **Alternatives.** Refuse site hooks outright (would forbid a legitimate test helper); count them as CI surface (needs `--bootstrap` for every such change).
 **Revert.** Drop the site-hook patterns from the classifier.
+
+**D39 amendment 1 (CI on #107).** The judge is CI surface (D3), so exam integrity refused #107 with `PR changes the exam together with the CI surface`. #11 ships as D27 did for #65: (A) #107, `Part of #11`, the code commit only (14a1668); the reviewer runs the #11 exam file from 70ce5cb against A's head (39 passed). (B) a second PR, `Closes #11`, with the exam commit 70ce5cb unchanged, rebased onto main after A.
