@@ -441,11 +441,13 @@ def decide(
                     f"review round {k} is over the limit of {MAX_REVIEW_ROUNDS} "
                     "and no D-entry names it"
                 )
-        asked = [v for v in verdicts if v[0] >= MAX_REVIEW_ROUNDS][:-1]
+        asked = [v for v in verdicts[:-1] if v[0] >= MAX_REVIEW_ROUNDS]
         for v in asked:
             if v[1] != "CHANGES":
                 reasons.append(f"review round {v[0]} was not a CHANGES verdict, more followed")
-        for a, b in zip(extra, extra[1:], strict=False):
+        first = next(i for i, v in enumerate(verdicts) if v[0] > MAX_REVIEW_ROUNDS)
+        tail = verdicts[first:]
+        for a, b in zip(tail, tail[1:], strict=False):
             if b[0] <= a[0]:
                 reasons.append(f"review round {b[0]} follows round {a[0]}, not strictly after it")
         if notes is not None:
