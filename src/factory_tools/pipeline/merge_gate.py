@@ -24,6 +24,7 @@ CI_FILE = ".github/workflows/ci.yml"
 RAW = "Accept: application/vnd.github.raw+json"
 JOB_URL = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/actions/runs/(\d+)/job/(\d+)/?$")
 VERDICT = re.compile(r"^Review round (\d+): (APPROVE|CHANGES) at ([0-9a-fA-F]{7,40})\s*$")
+DECIDES = re.compile(r"^Decides: #(\d+) round (\d+)(?:[ .].*)?$")
 D_HEADING = re.compile(r"^## D(\d+)\b")
 DECISIONS = "docs/factory/DECISIONS.md"
 CLOSES = re.compile(r"^\s*closes\s+#(\d+)\s*$", re.IGNORECASE | re.MULTILINE)
@@ -303,15 +304,15 @@ def _d_entries(path: str) -> list[tuple[int, str]]:
 def _decided_rounds(
     entries: list[tuple[int, str]], refs: set[int], rounds: list[int]
 ) -> dict[int, list[int]]:
-    """For each round, the ids of the D-entries naming this PR (or an issue it closes) and it."""
-    ref = re.compile("#(?:" + "|".join(str(n) for n in sorted(refs)) + r")\b")
+    """For each round, the D-entries with a `Decides: #<n> round <k>` line for this PR or issue."""
     found: dict[int, list[int]] = {}
     for n, text in entries:
-        if not ref.search(text):
-            continue
-        for k in rounds:
-            if re.search(rf"\bround {k}\b", text, re.IGNORECASE):
-                found.setdefault(k, []).append(n)
+        for line in text.splitlines():
+            m = DECIDES.match(line)
+            if m and int(m.group(1)) in refs and int(m.group(2)) in rounds:
+                ids = found.setdefault(int(m.group(2)), [])
+                if n not in ids:
+                    ids.append(n)
     return found
 
 
@@ -409,7 +410,7 @@ def decide(
     """
     gh = claims.scoped(run, repo)
     fields = (
-        "author,body,headRefOid,isCrossRepository,commits,statusCheckRollup,comments,"
+        "number,author,body,headRefOid,isCrossRepository,commits,statusCheckRollup,comments,"
         "url,closingIssuesReferences"
     )
     pr = json.loads(gh(["pr", "view", pr_number, "--json", fields]))
@@ -427,7 +428,9 @@ def decide(
         reasons.append(f"no APPROVE verdict for head {head[:7]}")
     extra = [v for v in verdicts if v[0] > MAX_REVIEW_ROUNDS]
     if extra:
-        refs = {int(pr_number)}
+        if verdicts[-1][1] != "APPROVE" or not head.startswith(verdicts[-1][2]):
+            reasons.append("the latest verdict is not an APPROVE at the head, past the limit")
+        refs = {int(pr["number"])}
         refs |= {int(r["number"]) for r in pr.get("closingIssuesReferences") or []}
         refs |= {int(n) for n in CLOSES.findall(pr.get("body") or "")}
         numbers = sorted({v[0] for v in extra})
@@ -438,9 +441,13 @@ def decide(
                     f"review round {k} is over the limit of {MAX_REVIEW_ROUNDS} "
                     "and no D-entry names it"
                 )
-        for v in extra[:-1]:
+        asked = [v for v in verdicts if v[0] >= MAX_REVIEW_ROUNDS][:-1]
+        for v in asked:
             if v[1] != "CHANGES":
                 reasons.append(f"review round {v[0]} was not a CHANGES verdict, more followed")
+        for a, b in zip(extra, extra[1:], strict=False):
+            if b[0] <= a[0]:
+                reasons.append(f"review round {b[0]} follows round {a[0]}, not strictly after it")
         if notes is not None:
             by_entry: dict[int, list[int]] = {}
             for k, ids in decided.items():

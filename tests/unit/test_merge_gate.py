@@ -347,6 +347,12 @@ def test_missing_log_has_no_entries(tmp_path):
     assert merge_gate._d_entries(str(tmp_path / "none.md")) == []
 
 
-def test_round_and_pr_match_with_word_boundaries():
-    entries = [(1, "## D1\nPR #9 Round 3"), (2, "## D2\n#90 round 3"), (3, "## D3\n#5 round 30")]
-    assert merge_gate._decided_rounds(entries, {9, 5}, [3]) == {3: [1]}
+def test_only_a_decides_line_binds_a_round():
+    entries = [
+        (1, "## D1\nDecides: #9 round 3"),
+        (2, "## D2\nPR #9 round 3 is mentioned in prose"),
+        (3, "## D3\nDecides: #9 round 30\nDecides: #5 round 3. Why."),
+        (4, "## D4\nDecides: #90 round 3\n  Decides: #9 round 3\nDecides: #9 round 3x"),
+        (5, "## D5\nDecides: #9 round 3 and 4"),
+    ]
+    assert merge_gate._decided_rounds(entries, {9, 5}, [3]) == {3: [1, 3, 5]}
