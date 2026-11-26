@@ -7,7 +7,7 @@ green CI run is checked with gh when the issue is closed (D30), not here.
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 import yaml
@@ -19,13 +19,17 @@ REQUIRED = {"exam-integrity.yml", "junit-gate.yml", "incident.yml"}
 
 # Every `uses:` line naming a .github/workflows/ file: quoted or not, any case, any
 # owner/repo, or local (./.github/workflows/x.yml, which has no @ref: ref is "").
+# The broad pattern only COLLECTS lines; whether one is a valid pin is decided by
+# _is_valid_use (the Factory's own workflow, exact path, full SHA, version comment).
 USES = re.compile(
-    r"""uses:\s*(?P<q>['"]?)(?:\./|[\w.-]+/[\w.-]+/)\.github/workflows/"""
+    r"""["']?uses["']?\s*:\s*(?P<q>['"]?)(?P<prefix>\./|[\w.-]+/[\w.-]+/)"""
+    r"""(?P<path>\.github/workflows/)"""
     r"""(?P<file>[\w.-]+)(?:@(?P<ref>[^\s'"]*))?(?P=q)(?P<rest>.*)$""",
     re.IGNORECASE,
 )
 PINNED = re.compile(r"^[0-9a-f]{40}$")
-VERSION_COMMENT = re.compile(r"^\s*#\s*(v\d+\.\d+\.\d+)\s*$")
+# Whitespace before the # is required.
+VERSION_COMMENT = re.compile(r"^\s+#\s*(v\d+\.\d+\.\d+)\s*$")
 
 
 def _load(path: Path) -> dict[Any, Any]:
@@ -110,9 +114,28 @@ def _section(name: str) -> str:
     return sections[name]
 
 
-def _uses_lines(text: str) -> list[tuple[str, str, str]]:
+class Use(NamedTuple):
+    file: str
+    ref: str
+    rest: str
+    prefix: str
+    path: str
+
+    @property
+    def target(self) -> str:
+        at = f"@{self.ref}" if self.ref else ""
+        return f"{self.prefix}{self.path}{self.file}{at}"
+
+
+def _uses_lines(text: str) -> list[Use]:
     return [
-        (m.group("file"), m.group("ref") or "", m.group("rest"))
+        Use(
+            m.group("file"),
+            m.group("ref") or "",
+            m.group("rest"),
+            m.group("prefix"),
+            m.group("path"),
+        )
         for m in map(USES.search, text.splitlines())
         if m
     ]
@@ -120,6 +143,55 @@ def _uses_lines(text: str) -> list[tuple[str, str, str]]:
 
 def _is_valid_pin(ref: str, rest: str) -> bool:
     return bool(PINNED.match(ref)) and bool(VERSION_COMMENT.match(rest))
+
+
+def _is_valid_use(u: Use) -> bool:
+    """Only Shashkist/factory (any case), exact .github/workflows/ path, never local."""
+    return (
+        u.prefix.lower() == "shashkist/factory/"
+        and u.path == ".github/workflows/"
+        and _is_valid_pin(u.ref, u.rest)
+    )
+
+
+YAML_BLOCK = re.compile(r"^[ \t]*```ya?ml[ \t]*\n(.*?)^[ \t]*```[ \t]*$", re.S | re.M)
+
+
+def _walk_uses(node: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "uses" and isinstance(v, str):
+                found.append(v)
+            found += _walk_uses(v)
+    elif isinstance(node, list):
+        for item in node:
+            found += _walk_uses(item)
+    return found
+
+
+def _yaml_workflow_uses(text: str) -> list[str]:
+    """Every `uses` value naming a .github/workflows/ file in a yaml fenced block."""
+    out: list[str] = []
+    for block in YAML_BLOCK.findall(text):
+        for doc in yaml.safe_load_all(block):
+            out += [v for v in _walk_uses(doc) if ".github/workflows/" in v.lower()]
+    return out
+
+
+def _yaml_uses_problems(text: str) -> list[str]:
+    # Each yaml value consumes one collected line with the same target.
+    remaining = list(_uses_lines(text))
+    problems = []
+    for value in _yaml_workflow_uses(text):
+        match = next((u for u in remaining if u.target == value), None)
+        if match is None:
+            problems.append(f"not collected as a uses line: {value!r}")
+            continue
+        remaining.remove(match)
+        if not _is_valid_use(match):
+            problems.append(f"not a valid pin: {value!r}")
+    return problems
 
 
 def test_the_three_reusable_workflows_are_found() -> None:
@@ -161,19 +233,23 @@ def test_each_section_states_the_permissions_the_caller_must_grant(name: str) ->
 def test_every_uses_line_is_pinned_by_full_sha_with_version_comment() -> None:
     uses = _uses_lines(_doc_text())
     assert uses, "docs/ci.md has no `uses: .../.github/workflows/...` example"
-    bad = [f"{f}@{r}{rest}" for f, r, rest in uses if not _is_valid_pin(r, rest)]
+    bad = [f"{u.target}{u.rest}" for u in uses if not _is_valid_use(u)]
     assert not bad, f"not pinned by a 40-hex SHA followed by a '# v<semver>' comment: {bad}"
+
+
+def test_every_yaml_uses_value_naming_a_workflow_is_a_collected_valid_pin() -> None:
+    assert _yaml_uses_problems(_doc_text()) == []
 
 
 @pytest.mark.parametrize("name", NAMES)
 def test_each_section_has_a_pinned_example_for_its_workflow(name: str) -> None:
     uses = _uses_lines(_section(name))
-    good = [u for u in uses if u[0] == name and _is_valid_pin(u[1], u[2])]
+    good = [u for u in uses if u[0] == name and _is_valid_use(u)]
     assert good, f"{name}: no pinned example `uses: ...{name}@<sha> # v<semver>` in its section"
 
 
 def test_all_pinned_examples_use_one_sha_and_one_version() -> None:
-    uses = [u for u in _uses_lines(_doc_text()) if _is_valid_pin(u[1], u[2])]
+    uses = [u for u in _uses_lines(_doc_text()) if _is_valid_use(u)]
     assert uses, "docs/ci.md has no pinned example"
     shas = {u[1] for u in uses}
     versions = {VERSION_COMMENT.match(u[2]).group(1) for u in uses}  # type: ignore[union-attr]
@@ -186,7 +262,7 @@ WF = ".github/workflows/exam-integrity.yml"
 
 
 def _bad(line: str) -> list[str]:
-    return [f for f, r, rest in _uses_lines(line) if not _is_valid_pin(r, rest)]
+    return [u.file for u in _uses_lines(line) if not _is_valid_use(u)]
 
 
 @pytest.mark.parametrize(
@@ -196,13 +272,32 @@ def _bad(line: str) -> list[str]:
         f"    - uses: Shashkist/factory/{WF}@{SHA} # v0.1.0",
         f'    uses: "Shashkist/factory/{WF}@{SHA}" # v0.1.0',
         f"    uses: 'Shashkist/factory/{WF}@{SHA}' # v0.1.0",
-        f"    uses: SHASKIST/Factory/.GitHub/Workflows/exam-integrity.yml@{SHA} # v0.1.0",
-        f"    uses: other-org/other.repo/{WF}@{SHA} # v0.1.0",
+        f"    uses: SHASHKIST/Factory/{WF}@{SHA} # v0.1.0",
+        f'    "uses": Shashkist/factory/{WF}@{SHA} # v0.1.0',
+        f"    uses : Shashkist/factory/{WF}@{SHA} # v0.1.0",
     ],
 )
 def test_parser_collects_and_accepts_a_pinned_line(line: str) -> None:
     assert len(_uses_lines(line)) == 1, f"line not collected: {line}"
     assert _bad(line) == [], f"pinned line rejected: {line}"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"    uses: SHASHKIST/Factory/.GitHub/Workflows/exam-integrity.yml@{SHA} # v0.1.0",
+        f"    uses: Shashkist/factory/.GitHub/workflows/exam-integrity.yml@{SHA} # v0.1.0",
+        f"    uses: other-org/other.repo/{WF}@{SHA} # v0.1.0",
+        f"    uses: evilorg/fork/{WF}@{SHA} # v0.1.0",
+        f"    uses: ./{WF}@{SHA} # v0.1.0",
+        f'    uses: "./{WF}@{SHA}" # v0.1.0',
+        f'    uses: "Shashkist/factory/{WF}@{SHA}"# v0.1.0',
+        f"    uses: Shashkist/factory/{WF}@{SHA}# v0.1.0",
+    ],
+)
+def test_parser_collects_but_rejects_a_line_that_is_not_the_factorys_exact_pin(line: str) -> None:
+    assert len(_uses_lines(line)) == 1, f"line not collected: {line}"
+    assert len(_bad(line)) == 1, f"line accepted as a valid pin: {line}"
 
 
 @pytest.mark.parametrize("quote", ["", '"', "'"])
@@ -249,7 +344,7 @@ def test_parser_collects_another_owners_workflow_and_rejects_it_unpinned() -> No
 
 def test_parser_reports_the_workflow_file_name() -> None:
     line = f'    uses: "Shashkist/factory/{WF}@{SHA}" # v0.1.0'
-    assert _uses_lines(line) == [("exam-integrity.yml", SHA, " # v0.1.0")]
+    assert [u[:3] for u in _uses_lines(line)] == [("exam-integrity.yml", SHA, " # v0.1.0")]
 
 
 @pytest.mark.parametrize(
@@ -262,3 +357,40 @@ def test_parser_reports_the_workflow_file_name() -> None:
 )
 def test_parser_ignores_lines_not_naming_a_workflow_file(line: str) -> None:
     assert _uses_lines(line) == []
+
+
+def _doc(*groups: list[str]) -> str:
+    # one job per group, so every group is its own yaml mapping
+    nl = chr(10)
+    fence = chr(96) * 3
+    parts = [f"{fence}yaml", "jobs:"]
+    for i, group in enumerate(groups):
+        parts += [f"  j{i}:", *group]
+    return nl.join([*parts, fence, ""])
+
+
+GOOD = [f"    uses: Shashkist/factory/{WF}@{SHA} # v0.1.0"]
+
+
+def test_yaml_check_accepts_a_block_with_a_pinned_example() -> None:
+    assert _yaml_uses_problems(_doc(GOOD)) == []
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        ["    uses: >-", f"      Shashkist/factory/{WF}@main"],
+        ["    uses: >-", f"      Shashkist/factory/{WF}@{SHA}"],
+        ["    uses:", f"      Shashkist/factory/{WF}@{SHA}"],
+        ["    uses:", f"      Shashkist/factory/{WF}@main"],
+        [f'    "uses": Shashkist/factory/{WF}@main'],
+        [f"    uses : Shashkist/factory/{WF}@main"],
+        [f'    uses: "Shashkist/factory/{WF}@{SHA} " # v0.1.0'],
+        [f"    uses: Shashkist/factory/{WF}@main"],
+        [f"    uses: evilorg/fork/{WF}@{SHA} # v0.1.0"],
+        [f"    uses: ./{WF}"],
+        [f"    uses: Shashkist/factory/.GitHub/Workflows/x.yml@{SHA} # v0.1.0"],
+    ],
+)
+def test_yaml_check_flags_an_unpinned_or_hidden_example(lines: list[str]) -> None:
+    assert _yaml_uses_problems(_doc(GOOD, lines)) != []
