@@ -11,13 +11,18 @@ runs them before the exam does): *.pth; a sitecustomize or usercustomize module
 __pycache__/sitecustomize.cpython-312.pyc or sitecustomize.cp312-win_amd64.pyd);
 a bare sitecustomize or usercustomize entry (a symlink to a package); and
 anything under a directory named sitecustomize or usercustomize (package form).
+A file named pyproject.toml at any depth is exam in a commit whose parsed
+tool.pytest.ini_options table differs from the parent's (changed, added or removed;
+an unparsable file counts as changed); otherwise it is code. It stays exam under
+--exam-paths. Judging that needs file content, so only the CI check does it; the merge
+gate works on file names and treats pyproject.toml as code.
 Code is every path outside tests/ that is not the exam.
 Fails when:
 - the range contains merge commits;
 - one commit changes the exam and code together;
 - the exam changes after the first commit that changed code;
 - the PR changes the exam together with the CI surface
-  (src/factory_tools/ci/** or the CI workflow); skipped with --bootstrap,
+  (src/factory_tools/ci/** or any file under .github/workflows/); skipped with --bootstrap,
   used when the base branch has no copy of this script yet.
 
 --exam-paths replaces the tests/ part of the exam rule with the given globs; the
@@ -32,6 +37,7 @@ and `**` both match across `/`. Both are optional; the defaults are as above.
 import argparse
 import subprocess
 import sys
+import tomllib
 from fnmatch import fnmatchcase
 
 MERGE_MSG = "merge commits are not allowed on a PR branch; rebase onto main"
@@ -76,9 +82,12 @@ def _is_site_hook(parts: list[str]) -> bool:
     return len(bits) == 1 or bits[-1] in SITE_SUFFIXES
 
 
-def _is_exam(path: str, exam_paths: list[str] | None = None) -> bool:
+def _is_exam(
+    path: str, exam_paths: list[str] | None = None, pytest_toml: frozenset[str] = frozenset()
+) -> bool:
+    """pytest_toml: pyproject.toml paths of this commit whose pytest table changed."""
     parts = path.split("/")
-    if _is_site_hook(parts):
+    if _is_site_hook(parts) or path in pytest_toml:
         return True
     # pytest configuration outside tests/unit/ can skip or rewrite exam results,
     # whatever the exam globs say; the defaults exempt only the top-level tests/unit/
@@ -90,8 +99,10 @@ def _is_exam(path: str, exam_paths: list[str] | None = None) -> bool:
     return parts[0] == "tests" and parts[:2] != ["tests", "unit"]
 
 
-def _is_code(path: str, exam_paths: list[str] | None = None) -> bool:
-    if _is_exam(path, exam_paths):
+def _is_code(
+    path: str, exam_paths: list[str] | None = None, pytest_toml: frozenset[str] = frozenset()
+) -> bool:
+    if _is_exam(path, exam_paths, pytest_toml):
         return False
     # top-level tests/ is never code, with the default exam rules only
     return exam_paths is not None or path.split("/")[0] != "tests"
@@ -100,7 +111,7 @@ def _is_code(path: str, exam_paths: list[str] | None = None) -> bool:
 def _is_ci_surface(path: str, ci_paths: list[str] | None = None) -> bool:
     if ci_paths is not None:
         return _matches(path, ci_paths)
-    return path.startswith("src/factory_tools/ci/") or path == ".github/workflows/ci.yml"
+    return path.startswith(("src/factory_tools/ci/", ".github/workflows/"))
 
 
 def check(
@@ -108,23 +119,26 @@ def check(
     bootstrap: bool = False,
     exam_paths: list[str] | None = None,
     ci_paths: list[str] | None = None,
+    pytest_toml: list[frozenset[str]] | None = None,
 ) -> list[str]:
-    """commits: changed paths per commit, oldest first. Returns error messages."""
+    """commits: changed paths per commit, oldest first. Returns error messages.
+
+    pytest_toml: per commit, the pyproject.toml paths whose pytest table changed."""
     errors: list[str] = []
     code_seen = False
+    toml = pytest_toml or [frozenset()] * len(commits)
     for i, files in enumerate(commits):
-        exam = any(_is_exam(f, exam_paths) for f in files)
-        code = any(_is_code(f, exam_paths) for f in files)
+        exam = any(_is_exam(f, exam_paths, toml[i]) for f in files)
+        code = any(_is_code(f, exam_paths, toml[i]) for f in files)
         if exam and code:
             errors.append(f"commit {i} changes the exam and code together")
         elif exam and code_seen:
             errors.append(f"commit {i} changes the exam after code was added")
         code_seen = code_seen or code
-    allf = [f for files in commits for f in files]
     if (
         not bootstrap
-        and any(_is_exam(f, exam_paths) for f in allf)
-        and any(_is_ci_surface(f, ci_paths) for f in allf)
+        and any(_is_exam(f, exam_paths, toml[i]) for i, fs in enumerate(commits) for f in fs)
+        and any(_is_ci_surface(f, ci_paths) for fs in commits for f in fs)
     ):
         errors.append("PR changes the exam together with the CI surface")
     return errors
@@ -134,6 +148,38 @@ def _git(*args: str) -> str:
     return subprocess.run(
         ["git", *args], check=True, capture_output=True, encoding="utf-8", errors="replace"
     ).stdout
+
+
+def _pytest_table(sha: str, path: str) -> object:
+    """The tool.pytest.ini_options table of path at sha; None when absent or no file.
+
+    An unparsable file returns a unique sentinel, so it differs from any other state:
+    fail closed, an exam change we cannot read is treated as one."""
+    try:
+        text = _git("show", f"{sha}:{path}")
+    except subprocess.CalledProcessError:
+        return None
+    try:
+        return tomllib.loads(text).get("tool", {}).get("pytest", {}).get("ini_options")
+    except (tomllib.TOMLDecodeError, AttributeError):
+        return object()
+
+
+def _changed_pytest_tomls(sha: str, files: list[str]) -> frozenset[str]:
+    out = set()
+    for f in files:
+        if f.rsplit("/", 1)[-1] != "pyproject.toml":
+            continue
+        parent = f"{sha}^"
+        before = _pytest_table(parent, f) if _has_parent(sha) else None
+        after = _pytest_table(sha, f)
+        if before != after:
+            out.add(f)
+    return frozenset(out)
+
+
+def _has_parent(sha: str) -> bool:
+    return bool(_git("rev-list", "--parents", "-n", "1", sha).split()[1:])
 
 
 def main(
@@ -158,7 +204,8 @@ def main(
         ]
         for sha in shas
     ]
-    errors = check(commits, bootstrap, exam_paths, ci_paths)
+    toml = [_changed_pytest_tomls(sha, files) for sha, files in zip(shas, commits, strict=True)]
+    errors = check(commits, bootstrap, exam_paths, ci_paths, toml)
     for err in errors:
         print(f"FAIL: {err}")
     print(f"checked {len(shas)} commits: {'FAILED' if errors else 'ok'}")

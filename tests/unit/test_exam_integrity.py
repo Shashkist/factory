@@ -208,3 +208,54 @@ def test_site_hooks_are_exam(path: str) -> None:
     ])
 def test_near_miss_names_are_code(path: str) -> None:
     assert check([[path, CODE]]) == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [".github/workflows/other.yml", ".github/workflows/a.yaml", ".github/workflows/s/x.yml"],
+)
+def test_every_workflow_is_ci_surface(path: str) -> None:
+    assert exam_integrity._is_ci_surface(path)
+
+
+@pytest.mark.parametrize(
+    "path", ["docs/.github/workflows/x.yml", ".github/workflowsx/x.yml", ".github/workflow/x.yml"]
+)
+def test_workflow_rule_is_anchored(path: str) -> None:
+    assert not exam_integrity._is_ci_surface(path)
+
+
+def test_pytest_table_change_makes_pyproject_exam() -> None:
+    toml = [frozenset({"a/pyproject.toml"})]
+    assert check([["a/pyproject.toml", CODE]], pytest_toml=toml) != []
+    assert exam_integrity._is_exam("a/pyproject.toml", ["x/**"], frozenset({"a/pyproject.toml"}))
+    assert check([["a/pyproject.toml", CODE]]) == []
+
+
+def _commit(text: str) -> str:
+    Path("pyproject.toml").write_text(text, encoding="utf-8")
+    subprocess.run(["git", "add", "pyproject.toml"], check=True)
+    subprocess.run(["git", "commit", "-qm", "c"], check=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_changed_pytest_tomls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for cmd in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", *cmd], check=True)
+    f = ["pyproject.toml"]
+    changed = {"pyproject.toml"}
+    new = _commit('[tool.pytest.ini_options]\naddopts = "-q"\n')  # new file with the table
+    assert exam_integrity._changed_pytest_tomls(new, f) == changed
+    ruff = _commit('[tool.pytest.ini_options]\naddopts = "-q"\n[tool.ruff]\nx = 1\n')
+    assert exam_integrity._changed_pytest_tomls(ruff, f) == frozenset()
+    edit = _commit('[tool.pytest.ini_options]\naddopts = "-x"\n')
+    assert exam_integrity._changed_pytest_tomls(edit, f) == changed
+    broken = _commit("[tool.pytest\n")  # unparsable: fail closed
+    assert exam_integrity._changed_pytest_tomls(broken, f) == changed
+    broken2 = _commit("[tool.pytest\n# again\n")
+    assert exam_integrity._changed_pytest_tomls(broken2, f) == changed
+    gone = _commit("[project]\n")
+    assert exam_integrity._changed_pytest_tomls(gone, f) == changed
