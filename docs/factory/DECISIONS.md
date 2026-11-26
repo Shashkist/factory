@@ -371,3 +371,9 @@ in force · factory · 2026-11-25 · revertible
 **Why.** The criteria ask for options with today's values as defaults or the profile; options mirror the judge exactly, so one set of strings serves both calls. Adding the CI-surface hold only when globs are given keeps criterion 2's "defaults keep every case".
 **Alternatives.** Read `.factory/factory.yaml` in the gate (a second source of truth beside the CI call; a profile has no CI-surface field yet). Always apply the CI-surface hold (changes default behaviour).
 **Revert.** Drop the two options; the gate classifies with the judge's defaults again.
+
+## D35 · #82: three pieces, and this repository's own CI pin follows a release tag (amends D25, like D26)
+**Decision.** #82 ships as PR #96 (criterion 1: `ci.yml` calls `junit-gate.yml` and `exam-integrity.yml` at the `v0.2.0` commit 29a613e, tag in a comment), a scratch caller for criterion 2 (draft #97, closed; its evidence is on the issue), and the exam-only PR #99 (criterion 3). Each PR body says `Part of #82`; the issue closes with the last of them. D25's rule "the pin is a full SHA of `main`" now reads: a full SHA of a release tag's commit on `main`, moved by a PR when a new tag is cut.
+**Why.** The exam change and `ci.yml` may never share a PR (the exam-integrity CI-surface rule), as in D26. Pinning to a release is what `docs/ci.md` tells clients, so our own CI runs exactly what they run.
+**Alternatives.** Keep following an arbitrary `main` SHA (our CI would test something no client pins). One PR (refused by exam integrity).
+**Revert.** Move the pin back to any full `main` SHA; D25 as written.
