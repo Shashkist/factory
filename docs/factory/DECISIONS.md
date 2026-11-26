@@ -394,3 +394,9 @@ Otherwise the round limit still holds the PR. Moving commits to a new PR to rese
 **Alternatives.** (a) The owner merges each such PR by hand: it comes back every time.
 
 **Revert.** Drop the exception from the gate; the limit holds again.
+
+## D37 · #91: the #67 step harness learns the two workflow ref fields (exam edit across issues, recorded)
+**Decision.** #91 criterion 2 puts a fail-closed first step in the gate jobs of `junit-gate.yml` and `exam-integrity.yml` that reads `job.workflow_repository` and `job.workflow_sha`. The #67 exam runs every `run` step of the gate job through `substitute()`, which knows only `inputs.junit-file` and asserts on any other expression, so five #67 behaviour cases failed on the guard with "the exam cannot evaluate an expression". An exam-only commit on the #91 branch, before the code, gives that harness realistic non-empty values for the two fields. No #67 assertion changes; the "cannot evaluate" assertion still refuses every other expression; the #91 exam keeps both empty cases.
+**Why.** Every older exam stays as strict as it was; the issue's criterion needs the guard, and the only conflict was the harness's table of known expressions.
+**Alternatives.** Put the guard in a step the harness does not run (not first: fails criterion 2); read the fields through a shell variable the runner sets (GitHub sets none for these two).
+**Revert.** Drop the two entries from the harness together with the guard step.
