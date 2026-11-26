@@ -184,3 +184,17 @@ def test_top_level_tests_is_code_only_under_exam_paths() -> None:
     mixed = ["tests/helper.py", "labs/m/tests/acceptance/a.py"]
     assert check([mixed], exam_paths=["labs/**/acceptance/**"])
     assert check([["tests/unit/a.py", CODE]]) == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["sitecustomize.py", "src/usercustomize.py", "tests/unit/sitecustomize.py", "a/b/x.pth"],
+)
+def test_site_hooks_are_exam(path: str) -> None:
+    assert len(check([[path, CODE]])) == 1
+    assert len(check([[path, CODE]], exam_paths=["labs/*/tests/acceptance/**"])) == 1
+
+
+@pytest.mark.parametrize("path", ["my_sitecustomize.py", "src/pth.py", "src/foo.pth.txt"])
+def test_near_miss_names_are_code(path: str) -> None:
+    assert check([[path, CODE]]) == []

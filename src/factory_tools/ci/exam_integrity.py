@@ -5,7 +5,9 @@ Usage: python exam_integrity.py <base> <head> [--bootstrap]
 
 The exam is every file under tests/ except tests/unit/, plus pytest
 configuration files (conftest.py, pytest.ini, .pytest.ini, tox.ini, setup.cfg)
-anywhere outside tests/unit/. Code is every path outside tests/ that is not the exam.
+anywhere outside tests/unit/, plus the interpreter start hooks sitecustomize.py,
+usercustomize.py and *.pth at any path (Python runs them before the exam does).
+Code is every path outside tests/ that is not the exam.
 Fails when:
 - the range contains merge commits;
 - one commit changes the exam and code together;
@@ -15,8 +17,8 @@ Fails when:
   used when the base branch has no copy of this script yet.
 
 --exam-paths replaces the tests/ part of the exam rule with the given globs; the
-pytest configuration files outside tests/unit/ are always exam, and the "top-level
-tests/ is never code" exception applies only without --exam-paths. --ci-paths
+pytest configuration files outside tests/unit/ and the start hooks are always exam, and
+the "top-level tests/ is never code" exception applies only without --exam-paths. --ci-paths
 replaces the CI surface. A value may hold several whitespace-separated globs.
 A leading ./ is dropped and a trailing / means <dir>/**.
 Globs are fnmatch style, matched against the whole repo-relative path, and `*`
@@ -30,6 +32,7 @@ from fnmatch import fnmatchcase
 
 MERGE_MSG = "merge commits are not allowed on a PR branch; rebase onto main"
 PYTEST_CONFIG = {"conftest.py", "pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg"}
+SITE_HOOKS = {"sitecustomize.py", "usercustomize.py"}
 
 
 def _norm_glob(g: str) -> str:
@@ -55,8 +58,14 @@ def _in_unit(parts: list[str]) -> bool:
     return any(parts[i : i + 2] == ["tests", "unit"] for i in range(len(parts) - 1))
 
 
+def _is_site_hook(name: str) -> bool:
+    return name in SITE_HOOKS or name.endswith(".pth")
+
+
 def _is_exam(path: str, exam_paths: list[str] | None = None) -> bool:
     parts = path.split("/")
+    if _is_site_hook(parts[-1]):
+        return True
     # pytest configuration outside tests/unit/ can skip or rewrite exam results,
     # whatever the exam globs say; the defaults exempt only the top-level tests/unit/
     in_unit = _in_unit(parts) if exam_paths is not None else parts[:2] == ["tests", "unit"]
