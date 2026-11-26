@@ -432,3 +432,10 @@ The exam gets these cases in an exam-only commit on #108 before the code fix.
 **Alternatives.** Add the summary line anyway (a change to the pinned reusable workflow, a new tag and a re-pin in every caller, for a line no gate reads); let the factory set the branch protection itself (a repository setting is the owner's, FACTORY.md).
 **Revert.** Reopen #10 for item 2 and add the line to `exam-integrity.yml`.
 
+## D41 · #109: two #65 exam cases that call a caller workflow plain code by default are re-pointed, in an exam-only PR before the judge
+**Finding.** Item 2 of #109 makes everything under `.github/workflows/` CI surface by default. Two cases of `tests/acceptance/test_issue_65_exam_path_inputs.py` assert the opposite: `test_caller_workflow_is_plain_code_without_ci_paths` and `test_defaults_do_not_treat_a_caller_workflow_as_ci_surface` (an exam commit, then `.github/workflows/lf-ci.yml`, passes without `--ci-paths`). With the judge change (PR A, f/109-surface 6cd037c) both fail, so PR A cannot be green; and the corrected cases cannot ride with the judge (D27).
+**Decision.** Ship #109 items 2 and 3 as three PRs: (0) exam-only, the two #65 cases keep their meaning ("a caller file that no rule names is plain code") but use a caller CI file outside `.github/workflows/`, so they hold on main and after A; (A) the judge, code only; (B) the #109 exam (ffd2d59) unchanged, which pins that defaults refuse a workflow with the exam. Nothing gets weaker once B lands: the old "workflow is code by default" claim is replaced by the stricter #109 cases, and the #65 cases still test that an unnamed caller file is code. Item 2 is the owner-directed scope (LF D178, LF #21).
+**Why.** The newer rule is stricter and was asked for; the only way to keep CI green at every merge is to move the two cases off the path the new rule claims before the judge lands.
+**Alternatives.** Delete the two cases (loses the "unnamed caller file is code" check); keep workflows other than `ci.yml` out of the surface by default (contradicts #109 item 2).
+**Revert.** Restore the two cases' path from main before PR 0 and drop item 2 from the judge.
+
