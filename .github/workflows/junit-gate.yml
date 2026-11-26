@@ -84,6 +84,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Fail closed on an empty workflow ref
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$WORKFLOW_REPOSITORY" ] || [ -z "$WORKFLOW_SHA" ]; then
+            echo "::error::job.workflow_repository or job.workflow_sha is empty: the judge cannot be pinned, so the gate fails"
+            exit 1
+          fi
       - name: Check out the judge at the pinned Factory commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
