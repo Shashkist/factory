@@ -353,3 +353,9 @@ in force · factory · 2026-11-25 · revertible
 **Why.** One issue, one exam-only PR stays small and reviewable; mixing a code change into it would break the exam-first order. The review of #90 round 1 found the split was missing, not wrong.
 **Alternatives.** Keep #67 open across two PRs (an issue that stays half-done between passes); put the code for criterion 8 into #90 (an exam and the code it tests in one PR).
 **Revert.** Close #91 and reopen #67 with criteria 7 to 9.
+
+## D32 · #67: a third round on PR #90 for the realistic criterion-5 holes; far-fetched leftovers go to #92
+**Decision.** Review round 2 of #90 found realistic edits that still let the gate go green after a failed exam job: the `exit` moved under a nested `if`/`elif`, `EXAM_RESULT` reassigned, or an early `exit 0`/`trap`. The same exam-writer fixes those, the criterion 2 `startswith` and nested-exit gap, and the safe spellings criterion 5 refuses, in one more exam-only commit. A fresh reviewer then verifies it as round 3 (D145, D148). The far-fetched leftovers (criterion 1: non-literal exit codes, heredoc swallowing, interpreter flag tricks, `defaults.run.shell`; criterion 6: `env -i`, `unset ${!PYTEST_*}`; a job-level `continue-on-error`) go to #92 at p3.
+**Why.** Criterion 5 is the hole round 2 of #66 was about. Merging an exam that still accepts it would pin nothing. The other items need deliberate obfuscation, so a static check of shell text has diminishing returns there.
+**Alternatives.** Merge after round 2 and move everything to #92 (criterion 5 would stay unpinned). Replace the text checks with running the step in a sandbox (much larger, needs a runner-like environment).
+**Revert.** Fold #92 back into a new round on the #67 exam.
