@@ -326,3 +326,87 @@ def test_commit_reasons_ci_surface_hold_only_when_a_glob_is_given():
     assert merge_gate._commit_reasons(pr, run, "o/r") == []
     reasons = merge_gate._commit_reasons(pr, run, "o/r", ci_paths=["labs/ci/**"])
     assert len(reasons) == 1 and "exam" in reasons[0] and "CI surface" in reasons[0]
+
+
+# ---- D36 (#102): the decision log ----
+
+
+def test_d_entries_run_to_the_next_level_two_heading(tmp_path):
+    log = tmp_path / "D.md"
+    log.write_text(
+        "# Log\nPR #9 round 3\n\n## D1 a\nPR #9 round 3\n### sub\nmore\n"
+        "## Other\nround 4\n## D2 b\nx\n",
+        encoding="utf-8",
+    )
+    entries = merge_gate._d_entries(str(log))
+    assert [n for n, _ in entries] == [1, 2]
+    assert "more" in entries[0][1] and "round 4" not in entries[0][1]
+
+
+def test_missing_log_has_no_entries(tmp_path):
+    assert merge_gate._d_entries(str(tmp_path / "none.md")) == []
+
+
+def test_only_a_decides_line_binds_a_round():
+    entries = [
+        (1, "## D1\nDecides: #9 round 3"),
+        (2, "## D2\nPR #9 round 3 is mentioned in prose"),
+        (3, "## D3\nDecides: #9 round 30\nDecides: #5 round 3. Why."),
+        (4, "## D4\nDecides: #90 round 3\n  Decides: #9 round 3\nDecides: #9 round 3x"),
+        (5, "## D5\nDecides: #9 round 3 and 4"),
+    ]
+    assert merge_gate._decided_rounds(entries, {9, 5}, [3]) == {3: [1, 3, 5]}
+
+
+R_HEAD = "9" * 40
+R_OLD = "8" * 40
+
+
+def _decide_rounds(monkeypatch, tmp_path, rounds):
+    """decide() on review verdicts only: every other rule passes; D1 decides rounds 3 and 4."""
+    log = tmp_path / "DECISIONS.md"
+    log.write_text("## D1\nDecides: #9 round 3\nDecides: #9 round 4\n", encoding="utf-8")
+    for name in ("_check_reasons", "_binding_reasons", "_commit_reasons", "_claim_reasons"):
+        monkeypatch.setattr(merge_gate, name, lambda *a, **k: [])
+    comments = [
+        {"author": {"login": "me"}, "createdAt": f"2026-01-01T00:00:{i:02d}Z",
+         "body": f"Review round {k}: {verdict} at {sha}"}
+        for i, (k, verdict, sha) in enumerate(rounds)
+    ]
+    pr = {"number": 9, "author": {"login": "me"}, "body": "", "headRefOid": R_HEAD,
+          "comments": comments, "closingIssuesReferences": []}
+    return merge_gate.decide("9", "s", run=lambda args: json.dumps(pr), decisions=str(log))
+
+
+@pytest.mark.parametrize("rounds", [
+    # an APPROVE past the limit was followed by more verdicts, even one numbered within the limit
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "APPROVE", R_OLD), (1, "APPROVE", R_HEAD)],
+    # a number going back after the first round past the limit
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "CHANGES", R_OLD), (2, "APPROVE", R_HEAD)],
+    [(3, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (4, "APPROVE", R_HEAD)],
+    # a verdict labelled below the limit just before the first extra round
+    [(1, "APPROVE", R_OLD), (3, "APPROVE", R_HEAD)],
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (1, "APPROVE", R_OLD), (3, "APPROVE", R_HEAD)],
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (0, "APPROVE", R_OLD), (3, "APPROVE", R_HEAD)],
+    # no verdict on this PR asked for the extra round
+    [(3, "APPROVE", R_HEAD)],
+    [(4, "APPROVE", R_HEAD)],
+    [(3, "CHANGES", R_OLD), (4, "APPROVE", R_HEAD)],
+    [(3, "CHANGES", R_HEAD), (4, "APPROVE", R_HEAD)],
+    # four reviews with only round 3 decided
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (1, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
+])
+def test_rounds_past_the_limit_hold_on_a_late_approve_or_a_backward_number(
+    monkeypatch, tmp_path, rounds
+):
+    assert _decide_rounds(monkeypatch, tmp_path, rounds) != []
+
+
+@pytest.mark.parametrize("rounds", [
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
+    [(1, "CHANGES", R_OLD), (2, "CHANGES", R_OLD), (3, "CHANGES", R_OLD), (4, "APPROVE", R_HEAD)],
+    [(1, "CHANGES", R_OLD), (3, "APPROVE", R_HEAD)],
+])
+def test_decided_rounds_past_the_limit_merge(monkeypatch, tmp_path, rounds):
+    assert _decide_rounds(monkeypatch, tmp_path, rounds) == []
