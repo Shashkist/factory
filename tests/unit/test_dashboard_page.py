@@ -37,12 +37,13 @@ def snapshot() -> dict[str, Any]:
     }
 
 
-def render(tmp_path: Path) -> dict[str, Any]:
+def render(tmp_path: Path, runner: dict[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
     node = shutil.which("node")
     assert node
-    live = {"generated_at": "2026-11-24T11:59:30+00:00", "schema": 1, "runner": {"state": "running"},
+    live = {"generated_at": "2026-11-24T11:59:30+00:00", "schema": 1, "runner": runner or {"state": "running"},
             "issues": [{"issue": 7, "repo": "", "title": "host lane", "station": "build"}],
             "agents": [], "workers": [], "crew": [], "log": []}
+    live.update(extra)
     sc = tmp_path / "s.json"
     sc.write_text(json.dumps({"now": "2026-11-24T12:00:00Z", "snapshot": snapshot(),
                               "steps": [{"now": "2026-11-24T12:00:00Z", "live": live}]}), encoding="utf-8")
@@ -101,3 +102,107 @@ def test_the_bar_has_one_tab_per_repository_with_the_host_selected(step: dict[st
     assert [text(t) for t in tabs] == ["Learning_factory 1", "factory 1"]
     assert [t["a"].get("aria-current") for t in tabs] == ["page", None]
     assert [t["a"]["href"] for t in tabs] == ["#/Learning_factory", "#/factory"]
+
+
+def test_an_idle_runner_without_a_pass_end_still_shows_the_lanes_as_last_pass(tmp_path: Path) -> None:
+    live = text(render(tmp_path, {"state": "idle"})["live"])
+    assert "Last pass:" in live and "#7 host lane" in live
+    assert "working" not in live.lower()
+
+
+ENDED = {"state": "idle", "pass_ended": "2026-11-24T09:25:00+00:00", "result": "shipped 1, paused 2"}
+BUSY_CREW = [{"id": "c0", "kind": "session", "type": "manager", "title": "manager pass", "state": "busy", "model": "m",
+              "started": "2026-11-24T08:55:00+00:00", "last": "2026-11-24T09:24:00+00:00", "tool": "Bash", "label": "x",
+              "children": [{"id": "c1", "kind": "subagent", "type": "reviewer", "title": "review #7", "state": "busy",
+                            "model": "m", "started": "2026-11-24T09:00:00+00:00", "last": "2026-11-24T09:24:00+00:00",
+                            "tool": "Read", "label": "", "children": []}]}]
+
+
+def classes(n: Any) -> set[str]:
+    return set(str(n["a"].get("class", "")).split())
+
+
+def nodes(step: dict[str, Any], cls: str) -> list[Any]:
+    return [n for n in walk(step["live"]) if cls in classes(n)]
+
+
+@pytest.mark.parametrize("runner", [
+    {"state": "budget", "pass_ended": "2026-11-24T09:25:00+00:00", "result": "ok"},
+    {"state": "paused", "pass_ended": "2026-11-24T09:25:00+00:00", "result": "ok"}])
+def test_a_budget_or_paused_runner_after_a_pass_end_is_still_between_passes(tmp_path: Path, runner: dict[str, Any]) -> None:
+    step = render(tmp_path, runner, crew=BUSY_CREW)
+    mgr = text(nodes(step, "lane-manager")[0]).lower()
+    assert "working" not in mgr and "now:" not in mgr and "last pass: ok" in mgr
+    assert nodes(step, "lane") and all(n["a"]["data-running"] == "0" for n in nodes(step, "lane"))
+
+
+def test_an_ended_pass_lane_ignores_the_crew_of_that_pass(tmp_path: Path) -> None:
+    crew = [{**BUSY_CREW[0], "children": [{**BUSY_CREW[0]["children"][0], "title": "review #7"}]}]
+    step = render(tmp_path, ENDED, crew=crew)
+    lane = nodes(step, "lane")[0]
+    body = text(lane)
+    assert "reviewer" not in body and "working" not in body.lower() and "now:" not in body
+    assert not [b for b in walk(lane) if b["t"] == "button" and b["a"].get("data-mark") == "active"]
+
+
+def test_an_idle_runner_without_a_pass_end_ignores_busy_crew_too(tmp_path: Path) -> None:
+    step = render(tmp_path, {"state": "idle"}, crew=BUSY_CREW)
+    assert "working" not in text(nodes(step, "lanes")[0]).lower() and "0 working" in text(step["live"])
+
+
+def test_titles_are_inside_the_lane_nodes_in_the_last_pass_fold(tmp_path: Path) -> None:
+    step = render(tmp_path, ENDED)
+    fold = nodes(step, "fold")[0]
+    assert "Last pass" in text(fold)
+    lanes = [n for n in walk(fold) if "lane" in classes(n)]
+    assert lanes and "#7 host lane" in text(lanes[0])
+
+
+def test_a_lane_with_a_failed_station_is_failed_not_paused(tmp_path: Path) -> None:
+    agent = {"id": "a1", "role": "implementer", "state": "ended", "station": "build", "last": "2026-11-24T09:20:00+00:00",
+             "substeps": [{"issue": 7, "repo": "", "title": "host lane", "station": "build", "substep": "x", "status": "fail",
+                           "at": "2026-11-24T09:20:00+00:00", "started": "2026-11-24T09:19:00+00:00", "detail": ""}]}
+    step = render(tmp_path, ENDED, agents=[agent])
+    head = text(nodes(step, "lane-head")[0])
+    assert "failed" in head and "paused" not in head
+    assert "1 failed" in text(nodes(step, "fold")[0]) and "0 paused" in text(nodes(step, "fold")[0])
+
+
+def test_the_crew_of_an_ended_pass_is_not_counted_as_working(tmp_path: Path) -> None:
+    step = render(tmp_path, ENDED, crew=BUSY_CREW)
+    live = text(step["live"])
+    assert "0 working" in live and "1 working" not in live and "2 working" not in live
+    assert "now:" not in live.lower()
+
+
+def test_a_live_pass_keeps_its_crew_working(tmp_path: Path) -> None:
+    step = render(tmp_path, {"state": "running", "pass_started": "2026-11-24T08:55:00+00:00"}, crew=BUSY_CREW)
+    assert "2 working" in text(step["live"])
+
+
+def open_step_agent() -> dict[str, Any]:
+    return {"id": "a1", "role": "implementer", "state": "running", "station": "build", "last": "2026-11-24T11:58:00+00:00",
+            "substeps": [{"issue": 7, "repo": "", "title": "host lane", "station": "build", "substep": "implement", "status": "start",
+                          "at": "2026-11-24T11:58:00+00:00", "started": "2026-11-24T11:58:00+00:00", "detail": ""}]}
+
+
+@pytest.mark.parametrize("runner", [
+    {"state": "idle"},
+    {"state": "idle", "pass_ended": "2026-11-24T09:25:00+00:00", "result": "ok"}])
+def test_an_ended_pass_lane_has_no_open_step_even_with_a_fresh_agent_step(tmp_path: Path, runner: dict[str, Any]) -> None:
+    step = render(tmp_path, runner, agents=[open_step_agent()])
+    lane = text(nodes(step, "lane")[0])
+    assert "now:" not in lane and "⏳" not in lane and "working" not in lane.lower()
+    assert "last:" in lane
+
+
+def test_the_manager_row_of_a_budget_pause_names_the_runner_state(tmp_path: Path) -> None:
+    step = render(tmp_path, {"state": "budget", "pass_ended": "2026-11-24T09:25:00+00:00", "result": "ok"})
+    mgr = text(nodes(step, "lane-manager")[0])
+    assert "Daily budget used" in mgr and "Idle" not in mgr
+
+
+def test_a_waiting_crew_root_of_an_ended_pass_is_settled(tmp_path: Path) -> None:
+    crew = [{**BUSY_CREW[0], "state": "waiting", "children": []}]
+    step = render(tmp_path, ENDED, crew=crew)
+    assert "waiting on its agents" not in text(step["live"])

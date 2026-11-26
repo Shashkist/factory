@@ -455,7 +455,24 @@ function latestKeys(a) {   // the lane keys holding the agent's latest sub-steps
   return out.length ? out : [laneKey(S(a.repo), Number(a.issue))];
 }
 
+// A pass is over once the runner is idle, or has a pass_ended stamp (the renderer clears it on every pass-start).
+function passEnded(d) {
+  var r = (d && d.runner) || {};
+  return S(r.state) === "idle" || !!r.pass_ended;
+}
+
+// The crew of an ended pass is history: nothing in it is working, and its last tool call is not "now".
+function settleCrew(n) {
+  var c = {};
+  Object.keys(n).forEach(function (k) { c[k] = n[k]; });
+  if (c.state === "busy" || c.state === "thinking" || c.state === "waiting") c.state = "finished";
+  c.tool = "";
+  c.children = arr(n.children).map(settleCrew);
+  return c;
+}
+
 function laneData(d) {
+  var ended = passEnded(d);
   var lanes = Object.create(null);
   arr(d.issues).forEach(function (i) {
     if (Number(i.issue) > 0) lanes[laneKey(S(i.repo), i.issue)] = { issue: Number(i.issue), repo: S(i.repo), key: laneKey(S(i.repo), i.issue), title: S(i.title), station: S(i.station), steps: [], agents: [], crew: [] };
@@ -465,7 +482,7 @@ function laneData(d) {
       var r = stepRef(a, s), l = lanes[laneKey(r.repo, r.issue)];
       if (!l) return;
       if (l.agents.indexOf(a) < 0) l.agents.push(a);
-      l.steps.push({ s: s, a: a, open: stepOpen(a, s, arr(a.substeps), d.generated_at) });
+      l.steps.push({ s: s, a: a, open: !ended && stepOpen(a, s, arr(a.substeps), d.generated_at) });
     });
   });
   crewNodes(arr(d.crew).slice(0, 1)).forEach(function (n) {   // the current pass only: older passes' agents confuse the lane
@@ -480,9 +497,9 @@ function laneData(d) {
       return Date.parse(S(n.last)) > (Date.parse(m) || 0) ? S(n.last) : m;
     }, l.last);
     l.first = l.steps.reduce(function (m, x) { return !m || S(x.s.started) < m ? S(x.s.started) : m; }, "");
-    var busy = l.crew.filter(function (n) { return n.state === "busy" || n.state === "thinking"; });
+    var busy = ended ? [] : l.crew.filter(function (n) { return n.state === "busy" || n.state === "thinking"; });
     var openSteps = l.steps.filter(function (x) { return x.open; });
-    l.running = busy.length > 0 || l.agents.some(function (a) { return agentLive(a, d.generated_at) && latestKeys(a).indexOf(l.key) >= 0; });
+    l.running = !ended && (busy.length > 0 || l.agents.some(function (a) { return agentLive(a, d.generated_at) && latestKeys(a).indexOf(l.key) >= 0; }));
     var cur = LIVE_STATIONS.indexOf(l.station);
     busy.forEach(function (n) {   // an agent at work is the strongest evidence of where the task is
       var at = LIVE_STATIONS.indexOf(ROLE_STATION[S(n.type)] || "");
@@ -556,7 +573,12 @@ function renderLanes(d, rerender) {
   var root = arr(d.crew)[0];
   var mgr = el("div", null, "lane-manager");
   mgr.appendChild(el("b", "🧭 Manager "));
-  if (root) {
+  var rr = d.runner || {};
+  var idle = passEnded(d);   // between passes: the crew block is the ended pass's, not live
+  if (idle) {
+    mgr.appendChild(el("span", joined([runnerText({ state: rr.state }), rr.result ? "last pass: " + S(rr.result) : "",
+      rr.pass_ended ? "ended " + agoAt(rr.pass_ended) : ""]), "muted"));
+  } else if (root) {
     mgr.appendChild(lel("span", null, "live-dot", { "data-state": S(root.state) }));
     mgr.appendChild(el("span", " " + (CREW_STATES[root.state] || S(root.state)) +
       (root.tool ? " · now: " + S(root.tool) + (root.label ? " “" + S(root.label) + "”" : "") : "")));
@@ -564,18 +586,19 @@ function renderLanes(d, rerender) {
     mgr.appendChild(el("span", runnerText(d.runner || {}), "muted"));
   }
   sec.appendChild(mgr);
+  var host = idle ? el("div", null, "lane-last") : sec;   // the lanes of an ended pass are history, folded under "Last pass"
   var nRun = lanes.filter(function (l) { return l.running; }).length;
   var nDone = lanes.filter(function (l) { return l.shipped; }).length;
-  sec.appendChild(el("div", joined([lanes.length + " task" + (lanes.length === 1 ? "" : "s") + " in this pass",
+  if (!idle) sec.appendChild(el("div", joined([lanes.length + " task" + (lanes.length === 1 ? "" : "s") + " in this pass",
     nRun + " working in parallel", nDone ? nDone + " shipped" : "", "click a station for its sub-steps"]), "muted"));
-  var done = lanes.filter(function (l) { return l.shipped; });
-  lanes.filter(function (l) { return !l.shipped; }).forEach(function (l) {
+  var done = idle ? [] : lanes.filter(function (l) { return l.shipped; });
+  lanes.filter(function (l) { return idle || !l.shipped; }).forEach(function (l) {
     var lane = lel("div", null, "lane", { "data-lane": l.key, "data-running": l.running ? "1" : "0" });
     var head = el("div", null, "lane-head");
     head.appendChild(el("b", laneLabel(l.repo, l.issue) + " " + l.title));
     var pr = l.pr;
     head.appendChild(el("span", " " + joined([pr ? "PR #" + S(pr.p.number) + (pr.open ? "" : " merged") : "",
-      l.running ? "working" : "waiting", l.first ? "for " + dur(l.first) : "", l.updated ? "last update " + agoAt(l.updated) : ""]), "muted"));
+      idle ? (l.shipped ? "shipped" : l.marks.indexOf("failed") >= 0 ? "failed" : "paused") : l.running ? "working" : "waiting", l.first && !idle ? "for " + dur(l.first) : "", l.updated ? "last update " + agoAt(l.updated) : ""]), "muted"));
     lane.appendChild(head);
     var bar = el("div", null, "lane-bar");
     LIVE_STATIONS.forEach(function (st, idx) {
@@ -608,8 +631,14 @@ function renderLanes(d, rerender) {
     l.crew.filter(function (n) { return n.state === "busy" || n.state === "thinking"; })
       .forEach(function (n) { lane.appendChild(agentLine(n)); });
     if (laneOpen[l.key]) lane.appendChild(laneDetail(l, laneOpen[l.key]));
-    sec.appendChild(lane);
+    host.appendChild(lane);
   });
+  if (idle && lanes.length) {
+    var nShipped = lanes.filter(function (l) { return l.shipped; }).length;
+    var nFailed = lanes.filter(function (l) { return !l.shipped && l.marks.indexOf("failed") >= 0; }).length;
+    sec.appendChild(fold("last-pass", "Last pass: " + joined([nShipped + " shipped", (lanes.length - nShipped - nFailed) + " paused",
+      nFailed ? nFailed + " failed" : ""]), host, true));
+  }
   if (done.length) {
     var row = el("div", null, "lane-done");
     row.appendChild(el("b", "✓ Shipped this pass: "));
@@ -728,6 +757,7 @@ function inView(d) {   // live.json narrowed to the selected repository (the run
 function renderLive(full) {
   showRunner(full);
   var d = inView(full);
+  if (passEnded(d)) d.crew = arr(d.crew).map(settleCrew);
   var titles = Object.create(null);
   var box = el("div", null, "live-box");
   var runner = el("div", runnerText(d.runner || {}), "live-runner");
