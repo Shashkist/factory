@@ -58,15 +58,26 @@ def strip_comment(line: str) -> str:
 
 
 def script_lines(run: str) -> list[str]:
-    """Logical lines of a run script: comments dropped, continuations joined, and a
-    `then` on its own line appended to the line above it."""
+    """Logical lines of a run script: comments dropped, continuations joined, a
+    `then` on its own line appended to the line above it, and a multi-line
+    `|| {` / `&& {` group folded into one line."""
     joined = re.sub(r"\\\n\s*", " ", run)
     out: list[str] = []
+    group: list[str] | None = None
     for raw in joined.splitlines():
         ln = strip_comment(raw.strip()).strip()
         if not ln:
             continue
-        if ln == "then" and out:
+        if group is not None:
+            if ln == "}":
+                out[-1] += " " + "; ".join(group) + "; }"
+                group = None
+            else:
+                group.append(ln.rstrip(";"))
+        elif re.search(r"(?:\|\||&&)\s*\{$", ln):
+            out.append(ln)
+            group = []
+        elif ln == "then" and out:
             out[-1] += "; then"
         else:
             out.append(ln)
@@ -112,15 +123,30 @@ OPENERS = re.compile(r"(?:if|case|for|while|until)\b")
 CLOSERS = re.compile(r"(?:fi|done|esac)\b")
 
 
-def top_level_exit_codes(stmts: list[str], k: int) -> list[int]:
-    """Exit codes of statements that run unconditionally in the main branch of the
+def depth_before(stmts: list[str], k: int) -> int:
+    """Nesting (if/case/loops, brace groups, function bodies) open before stmts[k]."""
+    depth = 0
+    for st in stmts[:k]:
+        u = unquote(st)
+        if CLOSERS.match(st):
+            depth -= 1
+        elif OPENERS.match(st):
+            depth += 1
+        depth += len(re.findall(r"(?<!\S)\{(?!\S)", u)) - len(re.findall(r"(?<!\S)\}(?!\S)", u))
+        assert depth >= 0, "closing token without an opener"
+    return depth
+
+
+def top_level_exits(stmts: list[str], k: int) -> list[tuple[int, int]]:
+    """(index, code) of statements that run unconditionally in the main branch of the
     `if` at index k: nested if/case/loops and elif/else branches are skipped."""
-    depth, alt, codes = 1, False, []
-    for st in stmts[k + 1 :]:
+    depth, alt, found = 1, False, []
+    for idx in range(k + 1, len(stmts)):
+        st = stmts[idx]
         if CLOSERS.match(st):
             depth -= 1
             if depth == 0:
-                return codes
+                return found
             continue
         if depth == 1 and re.match(r"(?:elif|else)\b", st):
             alt = True
@@ -134,18 +160,8 @@ def top_level_exit_codes(stmts: list[str], k: int) -> list[int]:
         if all(re.match(r"(?:echo|printf|true)\b", c) for c in chain[:-1]):
             m = re.fullmatch(r"exit(?:\s+(\d+))?", chain[-1])
             if m:
-                codes.append(int(m.group(1) or 0))
+                found.append((idx, int(m.group(1) or 0)))
     raise AssertionError("an if without its fi")
-
-
-def fails_at_top_level(stmts: list[str], k: int) -> bool:
-    codes = top_level_exit_codes(stmts, k)
-    return any(c != 0 for c in codes) and 0 not in codes
-
-
-def tail_exits_nonzero(tail: str) -> bool:
-    t = unquote(tail).strip()
-    return bool(re.fullmatch(r"exit\s+[1-9]\d*|\{.*\bexit\s+[1-9]\d*\s*;?\s*\}", t))
 
 
 def swallows_before(chunks: list[str]) -> str | None:
@@ -157,6 +173,36 @@ def swallows_before(chunks: list[str]) -> str | None:
         if re.search(r"(?<![\w-])exit(?:\s+0+\b|\s*(?:;|$|\}|&|\|))", flat):
             return f"an exit 0 or bare exit before the check: {ch!r}"
     return None
+
+
+def guard_at(stmts: list[str], k: int) -> bool:
+    """The `if` at k is reached on every run (depth 0, no early exit before it), and
+    its main branch ends the script with a non-zero exit, with no exit 0 before it."""
+    if depth_before(stmts, k) != 0:
+        return False
+    exits = top_level_exits(stmts, k)
+    bad = [i for i, c in exits if c != 0]
+    if not bad or any(c == 0 for _, c in exits):
+        return False
+    return swallows_before(stmts[: bad[0]]) is None
+
+
+def tail_exits_nonzero(tail: str) -> bool:
+    t = unquote(tail).strip()
+    if re.fullmatch(r"exit\s+[1-9]\d*", t):
+        return True
+    m = re.fullmatch(r"\{\s*(?:(.*?);\s*)?exit\s+[1-9]\d*\s*;?\s*\}", t)
+    return bool(m) and swallows_before([m.group(1) or ""]) is None
+
+
+def line_guard_at(lines: list[str], i: int, tail: str) -> bool:
+    """An `A || tail` line at index i is a guard: depth 0 and no swallow before it."""
+    before = statements(lines[:i])
+    return (
+        depth_before(before, len(before)) == 0
+        and swallows_before(before) is None
+        and tail_exits_nonzero(tail)
+    )
 
 
 def run_steps(text: str, jname: str | None = None) -> list[dict[str, Any]]:
@@ -312,17 +358,18 @@ def check_base_ref_verified(text: str) -> None:
     lines = script_lines(judge_step(text, INTEGRITY)["run"])
     stmts = statements(lines)
     judge = max(i for i, st in enumerate(stmts) if "exam_integrity.py" in st)
-    ref = r"\"?(?:refs/remotes/)?origin/\$(?:BASE_REF|\{BASE_REF\})\"?"
+    ref = r"\"?(?:refs/remotes/)?origin/\$(?:BASE_REF|\{BASE_REF\})(?:\^\{commit\})?\"?"
     git = r"git\s+(?:rev-parse|show-ref)(?:\s+(?:--verify|-q|--quiet))*\s+" + ref
-    redirs = r"(?:\s*>\s*/dev/null)?(?:\s*2>&1)?"
+    redirs = r"(?:\s*(?:&>|[12]?>)\s*/dev/null|\s*2>&1)*"
     if_form = re.compile(r"if\s+!\s+" + git + redirs)
     or_form = re.compile(git + redirs + r"\s*\|\|\s*(.*)")
     for i, st in enumerate(stmts[:judge]):
-        if if_form.fullmatch(st) and fails_at_top_level(stmts, i):
+        if if_form.fullmatch(st) and guard_at(stmts, i):
             return
-    for ln in lines[: max(i for i, x in enumerate(lines) if "exam_integrity.py" in x)]:
+    judge_line = max(i for i, x in enumerate(lines) if "exam_integrity.py" in x)
+    for i, ln in enumerate(lines[:judge_line]):
         m = or_form.fullmatch(ln)
-        if m and tail_exits_nonzero(m.group(1)):
+        if m and line_guard_at(lines, i, m.group(1)):
             return
     raise AssertionError("no check of origin/$BASE_REF that fails the step")
 
@@ -451,9 +498,62 @@ def test_criterion_4_mutation_is_rejected(weak: str) -> None:
 # ------------------------------------ 5. the gate fails unless the exam succeeded
 
 
-def step_if_is_always(value: Any) -> bool:
+def step_if_is_safe(value: Any) -> bool:
     m = re.fullmatch(r"\$\{\{(.*)\}\}", squash(value))
-    return (m.group(1) if m else squash(value)) == "always()"
+    return (m.group(1) if m else squash(value)) in ("always()", "success()")
+
+
+def rewrites_variable(stmts: list[str], var: str) -> bool:
+    for st in stmts:
+        u = unquote(st)
+        if re.search(r"(?:^|&&|\|\||\{|\()\s*(?:\(\(\s*)?" + var + r"\+?=", u):
+            return True
+        if re.match(r"(?:unset|export|read|declare|local|typeset|readonly|for)\b.*\b" + var, u):
+            return True
+        if re.match(r"printf\s+-v\s+" + var + r"\b", u):
+            return True
+    return False
+
+
+def case_guard_at(stmts: list[str], k: int) -> bool:
+    """`case $RESULT in success) ;; *) ...; exit N ;; esac` at depth 0."""
+    if depth_before(stmts, k) != 0:
+        return False
+    arms: list[tuple[str, list[str]]] = []
+    for idx in range(k + 1, len(stmts)):
+        st = stmts[idx]
+        if st == "esac":
+            break
+        if OPENERS.match(st) or CLOSERS.match(st):
+            return False
+        m = re.fullmatch(r"\(?([^\s()]+)\)\s*(.*)", st)
+        if m:
+            arms.append((m.group(1).strip("\"'"), []))
+            st = m.group(2)
+        if st and arms:
+            arms[-1][1].append(st)
+    else:
+        return False
+    if [a for a, _ in arms] != ["success", "*"]:
+        return False
+    ok_body, bad_body = arms[0][1], arms[1][1]
+    if exit_codes_of(ok_body):
+        return False
+    codes = exit_codes_of(bad_body)
+    if not codes or codes[0] == 0 or 0 in codes:
+        return False
+    first = next(i for i, st in enumerate(bad_body) if exit_codes_of([st]))
+    return swallows_before(stmts[:k] + bad_body[:first]) is None
+
+
+def exit_codes_of(body: list[str]) -> list[int]:
+    out = []
+    for st in body:
+        chain = [c.strip() for c in unquote(st).split("&&")]
+        m = re.fullmatch(r"exit(?:\s+(\d+))?", chain[-1])
+        if m:
+            out.append(int(m.group(1) or 0))
+    return out
 
 
 def check_gate_requires_exam_success(text: str) -> None:
@@ -464,44 +564,42 @@ def check_gate_requires_exam_success(text: str) -> None:
         names = [k for k, v in env.items() if squash(v) == "${{needs.exam.result}}"]
         if not names or truthy(step.get("continue-on-error")):
             continue
-        if "if" in step and not step_if_is_always(step["if"]):
+        if "if" in step and not step_if_is_safe(step["if"]):
             continue
         lines = script_lines(step["run"])
         stmts = statements(lines)
         for var in names:
-            flat = unquote("\n".join(lines))
-            if re.search(r"(?<![\w$])" + var + r"\+?=", flat):
-                continue
-            if re.search(
-                r"\b(?:unset|export|read|declare|local|typeset|readonly|for)\b[^;\n]*\b"
-                + var
-                + r"\b",
-                flat,
-            ):
-                continue
-            if re.search(r"\bprintf\s+-v\s+" + var + r"\b", flat):
+            if rewrites_variable(stmts, var):
                 continue
             ref = r"\"?\$(?:" + var + r"|\{" + var + r"\})\"?"
             val = r"[\"']?success[\"']?"
-            tests = (  # a test that is false when the result is not success
-                (r"\[\s+" + ref + r"\s+!=\s+" + val + r"\s+\]"),
-                (r"\[\[\s+" + ref + r"\s+!=\s+" + val + r"\s+\]\]"),
-                (r"test\s+" + ref + r"\s+!=\s+" + val),
-            )
-            ok_tests = (  # a test that is true when the result is success
-                (r"\[\s+" + ref + r"\s+==?\s+" + val + r"\s+\]"),
-                (r"\[\[\s+" + ref + r"\s+==?\s+" + val + r"\s+\]\]"),
-                (r"test\s+" + ref + r"\s+==?\s+" + val),
-            )
-            neg = re.compile(r"if\s+(?:" + "|".join(tests) + ")")
-            inv = re.compile(r"(?:" + "|".join(ok_tests) + r")\s*\|\|\s*(.*)")
+
+            def cmp(op: str, ref: str = ref, val: str = val) -> str:
+                return (
+                    "(?:" + ref + r"\s+" + op + r"\s+" + val + "|"
+                    + val + r"\s+" + op + r"\s+" + ref + ")"
+                )
+
+            def forms(op: str, cmp: Any = cmp) -> str:
+                return "|".join(
+                    (
+                        r"\[\s+" + cmp(op) + r"\s+\]",
+                        r"\[\[\s+" + cmp(op) + r"\s+\]\]",
+                        r"test\s+" + cmp(op),
+                    )
+                )
+
+            neg = re.compile(r"if\s+(?:" + forms("!=") + ")")
+            inv = re.compile(r"(?:" + forms("==?") + r")\s*\|\|\s*(.*)")
+            case = re.compile(r"case\s+" + ref + r"\s+in")
             for i, st in enumerate(stmts):
-                if neg.fullmatch(st) and fails_at_top_level(stmts, i):
-                    if swallows_before(stmts[:i]) is None:
-                        return
+                if neg.fullmatch(st) and guard_at(stmts, i):
+                    return
+                if case.fullmatch(st) and case_guard_at(stmts, i):
+                    return
             for i, ln in enumerate(lines):
                 m = inv.fullmatch(ln)
-                if m and tail_exits_nonzero(m.group(1)) and swallows_before(lines[:i]) is None:
+                if m and line_guard_at(lines, i, m.group(1)):
                     return
     raise AssertionError("the gate does not fail unless needs.exam.result is success")
 
@@ -773,7 +871,7 @@ def test_criterion_5_early_exit_or_trap_before_the_check_is_rejected(cmd: str) -
 
 @pytest.mark.parametrize(
     "name",
-    ["mismatched_close", "mismatched_open", "step_if_failure", "step_if_success"],
+    ["mismatched_close", "mismatched_open", "step_if_failure"],
 )
 def test_criterion_5_other_round_2_mutations_are_rejected(name: str) -> None:
     text = workflow_text(GATE)
@@ -781,9 +879,6 @@ def test_criterion_5_other_round_2_mutations_are_rejected(name: str) -> None:
         "mismatched_close": text.replace(RESULT_COND, cond('[ "$EXAM_RESULT" != "success" ]]')),
         "mismatched_open": text.replace(RESULT_COND, cond('[[ "$EXAM_RESULT" != "success" ]')),
         "step_if_failure": text.replace(RESULT_STEP, RESULT_STEP + "        if: failure()\n"),
-        "step_if_success": text.replace(
-            RESULT_STEP, RESULT_STEP + "        if: ${{ success() }}\n"
-        ),
     }[name]
     assert mutated != text
     with pytest.raises(AssertionError):
@@ -882,3 +977,255 @@ def test_criterion_2_condition_must_fullmatch(new_cond: str) -> None:
 def test_criterion_2_round_2_safe_spelling_stays_green(new_cond: str) -> None:
     text = workflow_text(INTEGRITY)
     check_base_ref_verified(text.replace(BASE_COND, IND + new_cond + "; then\n"))
+
+
+# ------------------------------------------------ round 3: behaviour and depth
+
+import os  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+
+def find_bash() -> str | None:
+    cands = []
+    if sys.platform == "win32":
+        cands += [
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"C:\Program Files\Git\usr\bin\bash.exe",
+        ]
+    found = shutil.which("bash")
+    if found and not re.search(r"system32|windowsapps", found, re.I):
+        cands.append(found)
+    return next((c for c in cands if os.path.isfile(c)), None)
+
+
+BASH = find_bash()
+needs_bash = pytest.mark.skipif(BASH is None, reason="no bash on PATH")
+
+KNOWN_EXPRESSIONS = {"inputs.junit-file": "acceptance.xml"}
+
+
+def substitute(value: str, result: str) -> str:
+    def repl(m: re.Match[str]) -> str:
+        expr = m.group(1).strip()
+        if expr == "needs.exam.result":
+            return result
+        assert expr in KNOWN_EXPRESSIONS, f"the exam cannot evaluate an expression: {expr}"
+        return KNOWN_EXPRESSIONS[expr]
+
+    return re.sub(r"\$\{\{(.*?)\}\}", repl, value)
+
+
+def run_gate_steps(text: str, result: str, workdir: Path) -> int:
+    """Run the gate job's run steps in order under bash, as Actions does (stop at the
+    first failing step), with the judge stubbed to exit 0 ("the report passes") and a
+    passing report in place. Returns the exit code of the gate."""
+    assert BASH
+    (workdir / "report").mkdir(exist_ok=True)
+    (workdir / "report" / "acceptance.xml").write_text("<testsuites/>", encoding="utf-8")
+    (workdir / "fakebin").mkdir(exist_ok=True)
+    fake = workdir / "fakebin" / "python3"
+    fake.write_bytes(b"#!/bin/sh\nexit 0\n")
+    fake.chmod(0o755)
+    for n, step in enumerate(run_steps(text, "gate")):
+        script = substitute(step["run"], result).replace("/usr/bin/python3", "./fakebin/python3")
+        path = workdir / f"step{n}.sh"
+        path.write_bytes(script.encode("utf-8").replace(b"\r\n", b"\n"))
+        env = {k: v for k, v in os.environ.items() if k != "EXAM_RESULT"}
+        env.update({k: substitute(str(v), result) for k, v in (step.get("env") or {}).items()})
+        done = subprocess.run(
+            [BASH, "--noprofile", "--norc", "-eo", "pipefail", path.name],
+            cwd=workdir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if done.returncode != 0:
+            return done.returncode
+    return 0
+
+
+NOT_SUCCESS = ["failure", "cancelled", "skipped"]
+
+
+def check_gate_behaviour(text: str, workdir: Path) -> None:
+    for result in NOT_SUCCESS:
+        sub = workdir / result
+        sub.mkdir()
+        rc = run_gate_steps(text, result, sub)
+        assert rc != 0, f"the gate step exits 0 with a passing report and exam result {result}"
+    ok = workdir / "success"
+    ok.mkdir()
+    assert run_gate_steps(text, "success", ok) == 0, "the gate step fails on a green exam"
+
+
+@needs_bash
+def test_criterion_5_behaviour_gate_step_fails_on_a_failed_exam_result(tmp_path: Path) -> None:
+    check_gate_behaviour(workflow_text(GATE), tmp_path)
+
+
+MISSING_IF = '          if [ ! -f "report/${JUNIT_FILE##*/}" ]; then\n'
+
+
+def weakened_gate(name: str, text: str) -> str:
+    blk = result_block(text)
+    no_block = text.replace(blk, "")
+    assert MISSING_IF in no_block
+    strict_open = IND + 'if [ -n "$STRICT" ]; then\n'
+    brace_tail = (
+        IND
+        + '[ "$EXAM_RESULT" = success ] || { [ "$EXAM_RESULT" = skipped ] && exit 0; exit 1; }\n'
+    )
+    return {
+        "nested_in_missing_report_check": no_block.replace(MISSING_IF, MISSING_IF + blk),
+        "opt_in_wrapper": text.replace(blk, strict_open + blk + IND + "fi\n"),
+        "uncalled_function": text.replace(blk, IND + "gate_check() {\n" + blk + IND + "}\n"),
+        "loop": text.replace(blk, IND + "for i in 1; do\n" + blk + IND + "done\n"),
+        "body_exits_0_first": text.replace(blk, blk.replace("exit 1", "exit 0", 1)),
+        "brace_tail_exits_0_first": text.replace(blk, brace_tail),
+    }[name]
+
+
+BEHAVIOUR_WEAKENED = [
+    "nested_in_missing_report_check",
+    "opt_in_wrapper",
+    "body_exits_0_first",
+    "brace_tail_exits_0_first",
+]
+
+
+@needs_bash
+@pytest.mark.parametrize("name", BEHAVIOUR_WEAKENED)
+def test_criterion_5_behaviour_case_fails_a_weakened_gate(name: str, tmp_path: Path) -> None:
+    mutated = weakened_gate(name, workflow_text(GATE))
+    with pytest.raises(AssertionError):
+        check_gate_behaviour(mutated, tmp_path)
+
+
+STATIC_WEAKENED = [*BEHAVIOUR_WEAKENED, "uncalled_function", "loop"]
+
+
+@pytest.mark.parametrize("name", STATIC_WEAKENED)
+def test_criterion_5_static_check_rejects_a_not_always_reached_check(name: str) -> None:
+    mutated = weakened_gate(name, workflow_text(GATE))
+    with pytest.raises(AssertionError):
+        check_gate_requires_exam_success(mutated)
+
+
+def test_criterion_5_static_check_rejects_opt_out_and_case_wrappers() -> None:
+    text = workflow_text(GATE)
+    blk = result_block(text)
+    for wrap in (
+        IND + 'if [ -z "$SKIP" ]; then\n' + blk + IND + "fi\n",
+        IND + 'case "$MODE" in\n' + IND + "  strict)\n" + blk + IND + "  ;;\n" + IND + "esac\n",
+        IND + 'if [ "$MODE" = a ]; then\n' + blk + IND + "else\n" + IND + "  true\n" + IND + "fi\n",
+    ):
+        with pytest.raises(AssertionError):
+            check_gate_requires_exam_success(text.replace(blk, wrap))
+    nested = IND2 + '[ "$EXAM_RESULT" = skipped ] && exit 0\n' + IND2 + "exit 1\n"
+    with pytest.raises(AssertionError):
+        check_gate_requires_exam_success(text.replace(blk, swap_exit(blk, nested)))
+
+
+@pytest.mark.parametrize("name", ["wrapper", "function", "opt_in", "exit0_first", "early_exit"])
+def test_criterion_2_depth_and_early_exit_are_rejected(name: str) -> None:
+    text = workflow_text(INTEGRITY)
+    blk = base_block(text)
+    early = IND2 + '[ -n "$CI" ] && exit 0\n' + IND2 + "exit 1\n"
+    mutated = {
+        "wrapper": text.replace(blk, IND + 'if [ -z "$SKIP" ]; then\n' + blk + IND + "fi\n"),
+        "function": text.replace(blk, IND + "check_base() {\n" + blk + IND + "}\n"),
+        "opt_in": text.replace(blk, IND + 'if [ -n "$STRICT" ]; then\n' + blk + IND + "fi\n"),
+        "exit0_first": text.replace(blk, blk.replace("exit 1", "exit 0", 1)),
+        "early_exit": text.replace(blk, swap_exit(blk, early)),
+    }[name]
+    with pytest.raises(AssertionError):
+        check_base_ref_verified(mutated)
+
+
+def test_criterion_2_or_form_under_a_wrapper_is_rejected() -> None:
+    text = workflow_text(INTEGRITY)
+    blk = base_block(text)
+    git = IND + 'git rev-parse --verify -q "origin/$BASE_REF" > /dev/null'
+    line = git + " || exit 1\n"
+    check_base_ref_verified(text.replace(blk, line))
+    with pytest.raises(AssertionError):
+        check_base_ref_verified(
+            text.replace(blk, IND + 'if [ -n "$STRICT" ]; then\n' + line + IND + "fi\n")
+        )
+    tail = ' || { [ -n "$CI" ] && exit 0; exit 1; }\n'
+    with pytest.raises(AssertionError):
+        check_base_ref_verified(text.replace(blk, git + tail))
+
+
+# round 3 safe spellings
+
+CASE_ON_RESULT = (
+    IND + 'case "$EXAM_RESULT" in\n' + IND + "  success) ;;\n"
+    + IND + "  *) echo bad; exit 1 ;;\n" + IND + "esac\n"
+)
+MULTI_LINE_GROUP = (
+    IND + '[ "$EXAM_RESULT" = success ] || {\n'
+    + IND2 + "echo bad\n" + IND2 + "exit 1\n" + IND + "}\n"
+)
+
+
+@pytest.mark.parametrize(
+    "respell",
+    [
+        lambda t, b: t.replace(b, MULTI_LINE_GROUP),
+        lambda t, b: t.replace(RESULT_COND, cond('[ success != "$EXAM_RESULT" ]')),
+        lambda t, b: t.replace(b, IND + '[ success = "$EXAM_RESULT" ] || exit 1\n'),
+        lambda t, b: t.replace(b, CASE_ON_RESULT),
+        lambda t, b: t.replace(b, IND + "echo EXAM_RESULT=$EXAM_RESULT\n" + b),
+        lambda t, b: t.replace(RESULT_STEP, RESULT_STEP + "        if: success()\n"),
+        lambda t, b: t.replace(RESULT_STEP, RESULT_STEP + "        if: ${{ success() }}\n"),
+    ],
+    ids=[
+        "multi-line-brace-group",
+        "reversed-operands",
+        "reversed-inverted",
+        "case-on-result",
+        "echo-not-assignment",
+        "step-if-success",
+        "step-if-success-expr",
+    ],
+)
+def test_criterion_5_round_3_safe_spelling_stays_green(respell: Any) -> None:
+    text = workflow_text(GATE)
+    mutated = respell(text, result_block(text))
+    assert mutated != text
+    check_gate_requires_exam_success(mutated)
+
+
+@pytest.mark.parametrize(
+    "new_cond",
+    [
+        'if ! git rev-parse --verify -q "origin/$BASE_REF^{commit}" > /dev/null',
+        'if ! git rev-parse --verify -q "origin/$BASE_REF" &> /dev/null',
+        'if ! git rev-parse --verify -q "origin/$BASE_REF" 2> /dev/null >/dev/null',
+    ],
+    ids=["peel-commit", "ampersand-redirect", "two-redirects"],
+)
+def test_criterion_2_round_3_safe_spelling_stays_green(new_cond: str) -> None:
+    text = workflow_text(INTEGRITY)
+    check_base_ref_verified(text.replace(BASE_COND, IND + new_cond + "; then\n"))
+
+
+@needs_bash
+@pytest.mark.parametrize(
+    "respell",
+    [
+        lambda t, b: t.replace(RESULT_COND, cond('[[ "$EXAM_RESULT" != "success" ]]')),
+        lambda t, b: t.replace(b, IND + '[ "$EXAM_RESULT" = success ] || exit 1\n'),
+        lambda t, b: t.replace(b, CASE_ON_RESULT),
+        lambda t, b: t.replace(b, MULTI_LINE_GROUP),
+    ],
+    ids=["dbl-bracket", "inverted", "case", "multi-line-group"],
+)
+def test_criterion_5_behaviour_case_passes_safe_spellings(respell: Any, tmp_path: Path) -> None:
+    text = workflow_text(GATE)
+    check_gate_behaviour(respell(text, result_block(text)), tmp_path)
