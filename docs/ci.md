@@ -62,7 +62,9 @@ A client with another layout sets `exam-paths` and `ci-paths`.
 
 No secrets.
 
-**Permissions the caller must grant.** `contents: read` (the workflow declares `contents`, nothing else).
+**The recorded exam commit.** Right after the exam commit is pushed, the manager writes a PR comment whose first line is `exam-commit: <40-hex sha>`. A comment is outside the branch, so a force-push cannot rewrite it. A step before the judge reads the PR comments with the job token and passes the SHA to the judge as `--exam-commit`. Only the first such comment counts, only when its author is an `OWNER`, `MEMBER` or `COLLABORATOR`, and only when it was never edited; an edited first marker fails the job, and later or other markers are ignored with a log line. With a marker the judge also fails when the exam commit is not an ancestor of the head (history was rewritten) or when any exam file differs between the exam commit and the head. Without a marker the per-commit check runs alone and the log says `no exam-commit marker: per-commit check only`. A failing comments API call fails the job; it is never read as "no marker".
+
+**Permissions the caller must grant.** From the release that adds the exam commit: `contents: read` and `pull-requests: read` (the workflow declares both; `pull-requests: read` reads the marker comment), so a caller that grants only `contents: read` must add `pull-requests: read` to the job that calls `exam-integrity.yml`. `v0.1.0` needs `contents: read` only.
 
 **Example** (a `pull_request` workflow):
 
