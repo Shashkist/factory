@@ -1,6 +1,6 @@
 """Exam integrity check (DECISIONS D3).
 
-Usage: python exam_integrity.py <base> <head> [--bootstrap]
+Usage: python exam_integrity.py <base> <head> [--bootstrap] [--exam-commit SHA]
            [--exam-paths GLOB [GLOB ...]] [--ci-paths GLOB [GLOB ...]]
 
 The exam is every file under tests/ except tests/unit/, plus pytest
@@ -26,6 +26,11 @@ Fails when:
   (src/factory_tools/ci/** or any file under .github/workflows/); skipped with --bootstrap,
   used when the base branch has no copy of this script yet.
 
+--exam-commit SHA (DECISIONS D43) is the recorded exam commit. The judge also fails when SHA
+is not a full 40-hex id of a commit, is not an ancestor of head, or when any file that is exam
+under the rules above differs between SHA and head. Without it the per-commit check runs
+alone and one line says so.
+
 --exam-paths replaces the tests/ part of the exam rule with the given globs; the
 pytest configuration files outside tests/unit/ and the start hooks are always exam, and
 the "top-level tests/ is never code" exception applies only without --exam-paths. --ci-paths
@@ -36,6 +41,7 @@ and `**` both match across `/`. Both are optional; the defaults are as above.
 """
 
 import argparse
+import re
 import subprocess
 import sys
 import tomllib
@@ -174,16 +180,99 @@ def _pytest_table(sha: str, path: str) -> object:
         return object()
 
 
-def _changed_pytest_tomls(sha: str, files: list[str]) -> frozenset[str]:
+def _changed_pytest_tomls(
+    sha: str, files: list[str], before_ref: str | None = None
+) -> frozenset[str]:
     out = set()
     for f in files:
         if f.rsplit("/", 1)[-1] != "pyproject.toml":
             continue
-        before = _pytest_table(f"{sha}^", f)  # no parent (root commit): git fails, None
+        # no parent (root commit): git fails, None
+        before = _pytest_table(before_ref or f"{sha}^", f)
         after = _pytest_table(sha, f)
         if before != after:
             out.add(f)
     return frozenset(out)
+
+
+def _check_exam_commit(sha: str, head: str, exam_paths: list[str] | None) -> list[str]:
+    """Errors for a recorded exam commit: fails closed on anything it cannot confirm."""
+    bad = _commit_error(sha, "exam commit")
+    if bad:
+        return [bad]
+    anc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", sha, head], capture_output=True, check=False
+    )
+    if anc.returncode != 0:
+        return [f"exam commit {sha} is not an ancestor of the head (history rewritten?)"]
+    diff = _exam_files_between(sha, head, exam_paths)
+    if isinstance(diff, str):
+        return [diff]
+    return [f"exam file {f} differs between exam commit {sha} and the head" for f in diff]
+
+
+def _exam_files_between(sha: str, other: str, exam_paths: list[str] | None) -> list[str] | str:
+    """Exam files that differ between two commits, or an error text when git cannot say."""
+    try:
+        files = [
+            f
+            for f in _git(
+                "-c", "core.quotePath=false", "diff", "--no-renames", "-z", "--name-only",
+                sha, other,
+            ).split("\0")
+            if f
+        ]
+        toml = _changed_pytest_tomls(other, files, before_ref=sha)
+    except subprocess.CalledProcessError as e:
+        return f"cannot compare {other} with exam commit {sha}: git exited {e.returncode}"
+    return [f for f in files if _is_exam(f, exam_paths, toml)]
+
+
+def _commit_error(sha: str, what: str) -> str | None:
+    """The one validator: a full 40-hex id naming a commit of this checkout, else the error."""
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        return f"{what} {sha!r} is not a full 40-hex commit id"
+    found = subprocess.run(
+        ["git", "cat-file", "-e", f"{sha}^{{commit}}"], capture_output=True, check=False
+    ).returncode == 0
+    return None if found else f"{what} {sha} is not a commit of this checkout"
+
+
+def _fetch_missing(chain: list[str]) -> None:
+    """D45: a rebase leaves the earlier marker commit out of the checkout; fetch it by id."""
+    for sha in chain:
+        if not re.fullmatch(r"[0-9a-f]{40}", sha) or _commit_error(sha, "") is None:
+            continue
+        r = subprocess.run(
+            ["git", "fetch", "--no-tags", "--depth=1", "origin", sha],
+            capture_output=True, check=False,
+        )
+        print(f"fetching exam-commit marker {sha} from origin: exit {r.returncode}")
+
+
+def _check_marker_chain(chain: list[str], head: str, exam_paths: list[str] | None) -> list[str]:
+    """D43 amendment 2: a later marker supersedes an earlier one only with an identical exam."""
+    for sha in chain:
+        print(f"exam-commit marker seen: {sha}")
+    if len(chain) > 1:
+        _fetch_missing(chain)
+    for earlier, later in zip(chain, chain[1:], strict=False):
+        bad = [e for s in (earlier, later) if (e := _commit_error(s, "exam-commit marker"))]
+        if bad:
+            return [
+                f"{e}; if its commit is gone after a rebase, delete the earlier marker comment"
+                for e in bad
+            ]
+        diff = _exam_files_between(earlier, later, exam_paths)
+        if isinstance(diff, str):
+            return [diff]
+        if diff:
+            return [
+                f"exam-commit marker {later} supersedes {earlier} but the exam differs "
+                f"({', '.join(diff)}): the exam cannot move after it was recorded"
+            ]
+    print(f"exam-commit marker used: {chain[-1]}")
+    return _check_exam_commit(chain[-1], head, exam_paths)
 
 
 def main(
@@ -192,6 +281,7 @@ def main(
     bootstrap: bool,
     exam_paths: list[str] | None = None,
     ci_paths: list[str] | None = None,
+    exam_commit: list[str] | None = None,
 ) -> int:
     if _git("rev-list", "--merges", f"{base}..{head}").split():
         print(f"FAIL: {MERGE_MSG}")
@@ -210,6 +300,10 @@ def main(
     ]
     toml = [_changed_pytest_tomls(sha, files) for sha, files in zip(shas, commits, strict=True)]
     errors = check(commits, bootstrap, exam_paths, ci_paths, toml)
+    if not exam_commit:
+        print("no exam-commit marker: per-commit check only")
+    else:
+        errors += _check_marker_chain(exam_commit, head, exam_paths)
     for err in errors:
         print(f"FAIL: {err}")
     print(f"checked {len(shas)} commits: {'FAILED' if errors else 'ok'}")
@@ -221,6 +315,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("base")
     ap.add_argument("head")
     ap.add_argument("--bootstrap", action="store_true")
+    ap.add_argument("--exam-commit", action="append", default=None, metavar="SHA")
     ap.add_argument("--exam-paths", nargs="+", action="extend", metavar="GLOB")
     ap.add_argument("--ci-paths", nargs="+", action="extend", metavar="GLOB")
     a = ap.parse_args(argv)
@@ -232,4 +327,4 @@ def _parse(argv: list[str]) -> argparse.Namespace:
 
 if __name__ == "__main__":
     a = _parse(sys.argv[1:])
-    sys.exit(main(a.base, a.head, a.bootstrap, a.exam_paths, a.ci_paths))
+    sys.exit(main(a.base, a.head, a.bootstrap, a.exam_paths, a.ci_paths, a.exam_commit))

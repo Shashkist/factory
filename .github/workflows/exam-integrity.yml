@@ -7,6 +7,8 @@
 # (inputs added by #65):
 #   exam-paths  globs of the exam files, replacing the default exam rule
 #   ci-paths    globs of the CI surface, replacing the default CI surface
+# The calling job must grant `pull-requests: read` (the exam-commit marker is read
+# from the PR comments, D43).
 # Each input is one string holding one or more globs separated by whitespace
 # or newlines (a YAML block scalar with one glob per line works). Globs are
 # fnmatch style against the repo-relative path; `*` and `**` match across `/`.
@@ -47,6 +49,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   exam-integrity:
@@ -74,6 +77,22 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .factory-tools
           persist-credentials: false
+      - name: Read the exam-commit marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -eo pipefail
+          # An API failure fails the job: it is not "no marker".
+          # Nothing is written into the caller's checkout (a symlink there could
+          # overwrite the pinned judge): the API output goes through a pipe.
+          markers=$(gh api --paginate "repos/$REPO/issues/$PR/comments" --jq '.[]
+            | select(.body | startswith("exam-commit:"))
+            | {id, author_association, created_at, updated_at, first: (.body | split("\n")[0])}' \
+            | /usr/bin/python3 -I .factory-tools/src/factory_tools/ci/exam_marker.py)
+          # The script prints only validated 40-hex ids, oldest first: joined by spaces here.
+          echo "EXAM_COMMITS=$(echo "$markers" | tr '\n' ' ')" >> "$GITHUB_ENV"
       - name: Exam integrity per commit
         env:
           BASE_REF: ${{ inputs.base-ref || github.base_ref }}
@@ -96,6 +115,9 @@ jobs:
           # Each input is one argv value; the judge splits it on whitespace, so
           # an input can never become a flag of its own.
           args=()
+          for m in $EXAM_COMMITS; do
+            args+=("--exam-commit=$m")
+          done
           if [ -n "${EXAM_PATHS//[[:space:]]/}" ]; then
             args+=("--exam-paths=$EXAM_PATHS")
           fi
