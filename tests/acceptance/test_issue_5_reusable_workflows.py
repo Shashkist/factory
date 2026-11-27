@@ -236,7 +236,12 @@ def test_criterion_5_no_secret_and_no_github_token(name: str) -> None:
             and isinstance(s.get("env"), dict)
             and re.fullmatch(r"\$\{\{\s*github\.token\s*\}\}", str(s["env"].get("GH_TOKEN", "")))
         ]
-        total = len(re.findall(r"github\.token", text))
+        # Count over the raw text and over the parsed YAML, take the larger: an
+        # anchor/alias hands the token to another step with one written occurrence.
+        total = max(
+            len(re.findall(r"github\.token", text)),
+            len(re.findall(r"github\.token", json.dumps(load(name)))),
+        )
         assert total <= 1, f"github.token appears {total} times, at most one is allowed"
         if total == 1:
             assert len(allowed) == 1, (
@@ -244,6 +249,10 @@ def test_criterion_5_no_secret_and_no_github_token(name: str) -> None:
                 "that runs gh api on the PR comments"
             )
             assert len(re.findall(r"github\.token", json.dumps(allowed[0]["env"]))) == 1
+            # The token is only the environment of gh; the run text never reads it.
+            assert "GH_TOKEN" not in allowed[0]["run"], (
+                "the run text must not reference GH_TOKEN, gh reads it from env"
+            )
     else:
         assert "github.token" not in text
 
