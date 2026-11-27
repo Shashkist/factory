@@ -221,3 +221,22 @@ deploy:
 - Deploying stays the client's CI/CD (§2 non-goal); the methodology only supplies the recipe and the checks.
 
 **The Factory's own storage.** The Factory gets its own database (Supabase is the candidate) only when the Factory itself needs more memory than GitHub and files give it, for example Hub accounts, projects and live state in v1. It is never used for a client's product data. Until then GitHub stays the source of truth (§3).
+
+## 19. Owner decisions, 2026-11-27: the self-serve kit comes first (v0.5)
+
+**What the product is, first of all:** the method, as skills and instructions for the user's own agent. A person downloads everything their agent needs from the Factory and connects their own repository. From then on their agent works as the factory, with a few manual runs at first.
+
+**v0.5, between the v0 migration and the Hub (v1).** Epic #135:
+1. **Install:** `/plugin marketplace add Shashkist/factory` and `/plugin install factory@factory` (#130).
+2. **Setup:** `/factory:setup` in the user's repository. It checks prerequisites and writes the profile, the `CLAUDE.md` section, the decisions and owner files, the labels, and a CI workflow that calls the Factory's pinned reusable workflows. Everything is opened as one PR (#131).
+3. **Design and plan:** plugin skills with which the user's agent writes the design and slices it into GitHub issues the loop can take (#132; roles as in section 18).
+4. **Run:**
+   - by hand with `/factory:run` (one pass);
+   - on a schedule with `factory-tools runner install` on Windows, macOS or Linux. It carries over LF's runner lessons: one pass at a time, a time limit, no orphan processes, sign-in expiry detection, async progress hooks (#133).
+5. **Trial:** an empty repository goes from install to its first merged PR using the README only (#134).
+
+**What stays the user's** (section 18): the GitHub account and plan, CI minutes, repository secrets, hosting and database, the Claude subscription. The kit gives instructions, templates and checks, and never holds the user's credentials.
+
+**The Hub (v1) adds** coordination when several people or machines work on one repository: atomic claims, a shared page with sign-in, and the GitHub App connector. A single user does not need it.
+
+**Repositories.** Public and private repositories can both be connected. A private repository's data is never shown on a public page (#129).
