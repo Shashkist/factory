@@ -25,7 +25,7 @@ def pick(comments: list[dict[str, object]]) -> list[str]:
     chain: list[str] = []
     for c in comments:
         cid = c.get("id")
-        m = FORMAT.fullmatch(str(c.get("first", "")))
+        m = FORMAT.fullmatch(str(c.get("first", "")).removesuffix("\r"))
         if c.get("author_association") not in TRUSTED:
             print(f"ignoring exam-commit marker comment {cid}: author not trusted", file=sys.stderr)
         elif m is None:

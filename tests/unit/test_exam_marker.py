@@ -168,3 +168,44 @@ def test_marker_step_does_not_write_into_the_workspace() -> None:
     assert "comments.jsonl" not in wf
     assert "set -eo pipefail" in wf
     assert "| /usr/bin/python3 -I .factory-tools/src/factory_tools/ci/exam_marker.py" in wf
+
+
+def _rebased_clone(tmp_path: Path, prune: bool) -> tuple[Path, str, str, str]:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _repo(origin)
+    _git(origin, "config", "uploadpack.allowAnySHA1InWant", "true")
+    e1 = _commit(origin, "tests/acceptance/x.py", "v1\n")
+    _git(origin, "commit", "-q", "--amend", "-m", "exam again", "--date", "2001-01-01T00:00:00")
+    e2 = _git(origin, "rev-parse", "HEAD")  # a rebase: same exam, new SHA, e1 unreachable
+    head = _commit(origin, "src.py", "code\n")
+    if prune:
+        _git(origin, "reflog", "expire", "--expire=now", "--all")
+        _git(origin, "gc", "-q", "--prune=now")
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", "--no-local", str(origin), str(clone))
+    assert subprocess.run(["git", "cat-file", "-e", e1], cwd=clone).returncode != 0
+    return clone, e1, e2, head
+
+
+def test_chain_fetches_an_unreachable_earlier_marker_by_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clone, e1, e2, head = _rebased_clone(tmp_path, prune=False)
+    monkeypatch.chdir(clone)
+    assert exam_integrity._check_marker_chain([e1, e2], head, None) == []
+    assert f"fetching exam-commit marker {e1}" in capsys.readouterr().out
+
+
+def test_chain_fails_closed_when_the_earlier_marker_is_not_fetchable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clone, e1, e2, head = _rebased_clone(tmp_path, prune=True)
+    monkeypatch.chdir(clone)
+    err = exam_integrity._check_marker_chain([e1, e2], head, None)
+    assert err and e1 in err[0] and "delete the earlier marker comment" in err[0]
+
+
+def test_marker_first_line_may_end_with_a_carriage_return() -> None:
+    assert pick([_c(1, first=f"exam-commit: {SHA}\r")]) == [SHA]
+    assert pick([_c(1, first=f"exam-commit: {SHA}\r\r")]) == []

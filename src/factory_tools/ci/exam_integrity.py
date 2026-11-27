@@ -197,12 +197,9 @@ def _changed_pytest_tomls(
 
 def _check_exam_commit(sha: str, head: str, exam_paths: list[str] | None) -> list[str]:
     """Errors for a recorded exam commit: fails closed on anything it cannot confirm."""
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        return [f"exam commit {sha!r} is not a full 40-hex commit id"]
-    try:
-        _git("cat-file", "-e", f"{sha}^{{commit}}")
-    except subprocess.CalledProcessError:
-        return [f"exam commit {sha} is not a commit of this checkout"]
+    bad = _commit_error(sha, "exam commit")
+    if bad:
+        return [bad]
     anc = subprocess.run(
         ["git", "merge-base", "--is-ancestor", sha, head], capture_output=True, check=False
     )
@@ -231,26 +228,41 @@ def _exam_files_between(sha: str, other: str, exam_paths: list[str] | None) -> l
     return [f for f in files if _is_exam(f, exam_paths, toml)]
 
 
-def _is_commit(sha: str) -> bool:
+def _commit_error(sha: str, what: str) -> str | None:
+    """The one validator: a full 40-hex id naming a commit of this checkout, else the error."""
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        return False
-    return subprocess.run(
+        return f"{what} {sha!r} is not a full 40-hex commit id"
+    found = subprocess.run(
         ["git", "cat-file", "-e", f"{sha}^{{commit}}"], capture_output=True, check=False
     ).returncode == 0
+    return None if found else f"{what} {sha} is not a commit of this checkout"
+
+
+def _fetch_missing(chain: list[str]) -> None:
+    """D45: a rebase leaves the earlier marker commit out of the checkout; fetch it by id."""
+    for sha in chain:
+        if not re.fullmatch(r"[0-9a-f]{40}", sha) or _commit_error(sha, "") is None:
+            continue
+        r = subprocess.run(
+            ["git", "fetch", "--no-tags", "--depth=1", "origin", sha],
+            capture_output=True, check=False,
+        )
+        print(f"fetching exam-commit marker {sha} from origin: exit {r.returncode}")
 
 
 def _check_marker_chain(chain: list[str], head: str, exam_paths: list[str] | None) -> list[str]:
     """D43 amendment 2: a later marker supersedes an earlier one only with an identical exam."""
     for sha in chain:
         print(f"exam-commit marker seen: {sha}")
+    if len(chain) > 1:
+        _fetch_missing(chain)
     for earlier, later in zip(chain, chain[1:], strict=False):
-        bad = [
-            f"exam-commit marker {s} is not a commit of this checkout"
-            for s in (earlier, later)
-            if not _is_commit(s)
-        ]
+        bad = [e for s in (earlier, later) if (e := _commit_error(s, "exam-commit marker"))]
         if bad:
-            return bad
+            return [
+                f"{e}; if its commit is gone after a rebase, delete the earlier marker comment"
+                for e in bad
+            ]
         diff = _exam_files_between(earlier, later, exam_paths)
         if isinstance(diff, str):
             return [diff]
