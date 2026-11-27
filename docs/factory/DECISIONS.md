@@ -491,3 +491,11 @@ in force · factory · 2026-11-27
 **Why.** Both follow from D43 (1) and amendment 2 and are the safe reading: neither lets an untrusted comment or a repeat weaken the check.
 **Alternatives.** Leave both unpinned.
 **Revert.** Drop the two cases in an exam-only commit.
+
+## D47 · #120 after the review limit: the round-2 exam gaps are closed in an exam-only commit on #128, verified by a fresh reviewer
+in force · factory · 2026-11-27
+
+**Decision.** Review round 2 of #128 (the last round) asked for changes at 38b484f: (1, blocking) the issue's scope addition is not in the exam: a commit that deletes a `pyproject.toml` with a pytest table together with code, and an unparsable `pyproject.toml` changed together with code, must each be refused; (2) the jq projection that feeds the marker module is not pinned (`author_association`, `created_at`, `updated_at`, first line by `split("\n")[0]`); (3) the marker module is run only as `python -m`, while the workflow runs it as a plain file under `-I`. All three are closed in one exam-only commit appended to `f/120-exam-commit-2` (no `src/` change); a fresh reviewer verifies it, and the manager posts that verdict as round 3 at the new head. Finding 4 (weaker duplicate cases in the first file, duplicated helpers) becomes a p3 follow-up.
+**Why.** The PR is exam-only, so the fix keeps it exam-only and does not loosen anything; the judge already refuses both cases (checked by hand by the reviewer), so the new cases pass on main.
+**Alternatives.** Merge as is and move findings 1 to 3 to a follow-up (leaves "Closes #120" with the issue's own scope addition unexamined).
+**Revert.** Drop the added cases in an exam-only commit.
