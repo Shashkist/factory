@@ -483,3 +483,11 @@ in force · factory · 2026-11-27 · revertible
 **Decision.** Fix on #125: (1) before the chain check, the judge fetches each marker SHA that is not in the checkout by its id (`git fetch --no-tags --depth=1 origin <sha>`; GitHub serves a commit of the repository by SHA while it is stored), then checks again; still missing fails closed, and the message says to delete the earlier marker comment after a rebase when its commit is gone (D43 amendment 2: a deleted marker is a trusted reset). A unit case runs the chain in a `git clone --no-local` where the earlier commit is unreachable but fetchable from the origin, and one where it is not fetchable. (2) One shared validator for the 40-hex and `cat-file -e` checks (non-blocking finding 2). (3) A trailing `\r` on the marker's first line is stripped before matching (finding 3). Finding 4 (a live run of the marker step) stays the gate before any re-pin, as in round 1. A fresh reviewer verifies the fix; the manager posts its verdict as round 2 at the new head.
 **Alternatives.** Document "delete the earlier marker after a rebase" only (the case amendment 2 is for keeps failing); compare exam blobs through the API (a second code path and more token use).
 **Revert.** Revert the fix commit; the chain check goes back to failing closed on an unreachable earlier marker.
+
+## D46 · #120 review round 1: the exam also pins two marker behaviours the decisions leave open
+in force · factory · 2026-11-27
+
+**Assumption.** Review round 1 of #128 (PR B of #120) found that the marker selection, the marker module and the workflow wiring rested on unit tests alone (the D41 amendment 2 objection); an exam-only commit (38b484f) adds them. Two of its cases pin behaviour that D43 does not state, taken from the code shipped in #125: (1) an edited marker of an untrusted author is ignored with exit 0 (untrusted markers never count, edited or not; only an edited trusted marker fails the run); (2) a repeated SHA stays in the marker chain (the same exam twice passes the identical-exam check trivially).
+**Why.** Both follow from D43 (1) and amendment 2 and are the safe reading: neither lets an untrusted comment or a repeat weaken the check.
+**Alternatives.** Leave both unpinned.
+**Revert.** Drop the two cases in an exam-only commit.
