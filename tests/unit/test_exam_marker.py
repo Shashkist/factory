@@ -21,38 +21,68 @@ def _c(cid: int, assoc: str = "OWNER", first: str = f"exam-commit: {SHA}", edite
 
 
 def test_no_comments_means_no_marker() -> None:
-    assert pick([]) is None
+    assert pick([]) == []
 
 
 @pytest.mark.parametrize("assoc", ["OWNER", "MEMBER", "COLLABORATOR"])
 def test_trusted_first_marker_counts(assoc: str) -> None:
-    assert pick([_c(1, assoc)]) == SHA
+    assert pick([_c(1, assoc)]) == [SHA]
 
 
 @pytest.mark.parametrize("assoc", ["NONE", "CONTRIBUTOR", "FIRST_TIMER", "", "MANNEQUIN"])
 def test_untrusted_marker_is_ignored(assoc: str) -> None:
-    assert pick([_c(1, assoc)]) is None
+    assert pick([_c(1, assoc)]) == []
 
 
-def test_only_the_first_trusted_marker_counts() -> None:
+def test_trusted_markers_form_a_chain_and_untrusted_ones_are_skipped() -> None:
     other = "b" * 40
     later = _c(3, first=f"exam-commit: {other}")
     got = pick([_c(1, "NONE", f"exam-commit: {other}"), _c(2), later])
-    assert got == SHA
+    assert got == [SHA, other]
 
 
-def test_edited_first_marker_is_refused() -> None:
+def test_edited_marker_is_refused() -> None:
     with pytest.raises(ValueError, match="edited"):
         pick([_c(1, edited=True), _c(2)])
 
 
-def test_main_prints_the_value_and_fails_on_an_edited_marker(
+@pytest.mark.parametrize(
+    "first",
+    [
+        "exam-commit:",
+        "exam-commit: ",
+        f"exam-commit: {SHA} (exam)",
+        f"exam-commit: {SHA[:39]}",
+        f"exam-commit: {'A' * 40}",
+        f"exam-commit:{SHA}",
+    ],
+)
+def test_malformed_marker_line_is_ignored_not_counted(
+    first: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert pick([_c(1, first=first), _c(2)]) == [SHA]
+    assert "ignoring exam-commit comment 1" in capsys.readouterr().err
+
+
+def test_malformed_edited_marker_does_not_fail_the_run() -> None:
+    assert pick([_c(1, first="exam-commit:", edited=True), _c(2)]) == [SHA]
+
+
+def test_main_prints_the_values_and_fails_on_an_edited_marker(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert main(json.dumps(_c(1)) + "\n") == 0
     assert capsys.readouterr().out.strip() == SHA
     assert main(json.dumps(_c(1, edited=True))) == 1
     assert main("not json") == 1
+
+
+def test_main_splits_on_newline_only(capsys: pytest.CaptureFixture[str]) -> None:
+    # U+0085 and U+2028 inside a JSON line (gh's jq prints them raw) must not split it.
+    weird = json.dumps(_c(1, "NONE", "exam-commit: x\x85y z"), ensure_ascii=False)
+    assert "\x85" in weird
+    assert main(weird + "\n" + json.dumps(_c(2)) + "\n") == 0
+    assert capsys.readouterr().out.strip() == SHA
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -81,3 +111,60 @@ def test_exam_commit_checks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert "40-hex" in check("abc", "HEAD", None)[0]
     assert "not a commit" in check("0" * 40, "HEAD", None)[0]
     assert "ancestor" in check(_git(tmp_path, "rev-parse", "HEAD"), "HEAD~1", None)[0]
+
+
+def _repo(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "tests" / "acceptance").mkdir(parents=True)
+
+
+def _commit(tmp_path: Path, name: str, text: str) -> str:
+    (tmp_path / name).write_text(text)
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", name)
+    return _git(tmp_path, "rev-parse", "HEAD")
+
+
+def test_marker_chain_supersedes_only_with_an_identical_exam(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _repo(tmp_path)
+    e1 = _commit(tmp_path, "tests/acceptance/x.py", "v1\n")
+    _git(tmp_path, "commit", "-q", "--amend", "-m", "exam again", "--date", "2001-01-01T00:00:00")
+    e2 = _git(tmp_path, "rev-parse", "HEAD")  # same tree, new SHA (a rebase)
+    assert e1 != e2
+    head = _commit(tmp_path, "src.py", "code\n")
+    monkeypatch.chdir(tmp_path)
+    chain = exam_integrity._check_marker_chain
+    assert chain([e1, e2], head, None) == []  # identical exam: the newest marker is used
+    assert f"exam-commit marker used: {e2}" in capsys.readouterr().out
+    # a later marker whose exam differs is refused, naming both SHAs
+    moved = _commit(tmp_path, "tests/acceptance/x.py", "v2\n")
+    err = chain([e2, moved], "HEAD", None)
+    assert len(err) == 1 and e2 in err[0] and moved in err[0] and "tests/acceptance/x.py" in err[0]
+    # a chain member that is not a commit fails closed
+    assert "not a commit" in chain([e2, "0" * 40], "HEAD", None)[0]
+    assert chain([moved], "HEAD", None) == []  # a single marker is checked as before
+
+
+def test_main_takes_several_exam_commit_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo(tmp_path)
+    base = _commit(tmp_path, "a.txt", "a\n")
+    e = _commit(tmp_path, "tests/acceptance/x.py", "v1\n")
+    _git(tmp_path, "checkout", "-q", "-b", "pr")
+    head = _commit(tmp_path, "src.py", "code\n")
+    monkeypatch.chdir(tmp_path)
+    args = exam_integrity._parse(["main", head, f"--exam-commit={e}", f"--exam-commit={e}"])
+    assert args.exam_commit == [e, e]
+    assert exam_integrity.main(base, head, False, None, None, args.exam_commit) == 0
+
+
+def test_marker_step_does_not_write_into_the_workspace() -> None:
+    wf = (Path(__file__).parents[2] / ".github" / "workflows" / "exam-integrity.yml").read_text()
+    assert "comments.jsonl" not in wf
+    assert "set -eo pipefail" in wf
+    assert "| /usr/bin/python3 -I .factory-tools/src/factory_tools/ci/exam_marker.py" in wf

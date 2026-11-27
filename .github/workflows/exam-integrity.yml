@@ -85,13 +85,14 @@ jobs:
         run: |
           set -eo pipefail
           # An API failure fails the job: it is not "no marker".
-          gh api --paginate "repos/$REPO/issues/$PR/comments" --jq '.[]
+          # Nothing is written into the caller's checkout (a symlink there could
+          # overwrite the pinned judge): the API output goes through a pipe.
+          markers=$(gh api --paginate "repos/$REPO/issues/$PR/comments" --jq '.[]
             | select(.body | startswith("exam-commit:"))
             | {id, author_association, created_at, updated_at, first: (.body | split("\n")[0])}' \
-            > comments.jsonl
-          marker=$(/usr/bin/python3 -I .factory-tools/src/factory_tools/ci/exam_marker.py < comments.jsonl)
-          rm -f comments.jsonl
-          echo "EXAM_COMMIT=$marker" >> "$GITHUB_ENV"
+            | /usr/bin/python3 -I .factory-tools/src/factory_tools/ci/exam_marker.py)
+          # The script prints only validated 40-hex ids, oldest first: joined by spaces here.
+          echo "EXAM_COMMITS=$(echo "$markers" | tr '\n' ' ')" >> "$GITHUB_ENV"
       - name: Exam integrity per commit
         env:
           BASE_REF: ${{ inputs.base-ref || github.base_ref }}
@@ -114,9 +115,9 @@ jobs:
           # Each input is one argv value; the judge splits it on whitespace, so
           # an input can never become a flag of its own.
           args=()
-          if [ -n "$EXAM_COMMIT" ]; then
-            args+=("--exam-commit=$EXAM_COMMIT")
-          fi
+          for m in $EXAM_COMMITS; do
+            args+=("--exam-commit=$m")
+          done
           if [ -n "${EXAM_PATHS//[[:space:]]/}" ]; then
             args+=("--exam-paths=$EXAM_PATHS")
           fi

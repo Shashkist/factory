@@ -1,45 +1,50 @@
-"""Pick the recorded exam commit from a PR's comments (DECISIONS D43). Stdlib only.
+"""Pick the recorded exam commits from a PR's comments (DECISIONS D43). Stdlib only.
 
 Usage: python exam_marker.py < comments.jsonl
 Each input line is a JSON object: id, author_association, created_at, updated_at, first
 (the first line of the comment body, which starts with `exam-commit:`), in comment order.
 
-Only the first marker by an OWNER, MEMBER or COLLABORATOR counts. Other markers are ignored
-with a log line on stderr. When the first counted marker was edited (updated_at differs from
-created_at) the run fails: it could have re-pointed the record. Prints the value after
-`exam-commit:` (the judge validates it) or nothing when there is no marker.
+Lines are split on "\n" only (a commenter can put U+0085 or U+2028 in a body).
+A marker counts only when its first line fully matches `exam-commit: <40 hex>`, its author is
+an OWNER, MEMBER or COLLABORATOR, and it was not edited. Other markers are ignored with a log
+line on stderr. An edited marker by a trusted author fails the run (it could have re-pointed
+the record). Prints the counted SHAs, one per line, oldest first (D43 amendment 2: the judge
+accepts a later one only when the exam is identical); prints nothing when there is no marker.
 """
 
 import json
+import re
 import sys
 
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
+FORMAT = re.compile(r"exam-commit: ([0-9a-f]{40})")
 
 
-def pick(comments: list[dict[str, object]]) -> str | None:
-    """The marker value, None when there is none; ValueError when it must be refused."""
-    chosen: str | None = None
+def pick(comments: list[dict[str, object]]) -> list[str]:
+    """The counted marker SHAs in order; ValueError when one must be refused."""
+    chain: list[str] = []
     for c in comments:
         cid = c.get("id")
+        m = FORMAT.fullmatch(str(c.get("first", "")))
         if c.get("author_association") not in TRUSTED:
             print(f"ignoring exam-commit marker comment {cid}: author not trusted", file=sys.stderr)
-        elif chosen is not None:
-            print(f"ignoring later exam-commit marker comment {cid}", file=sys.stderr)
+        elif m is None:
+            print(f"ignoring exam-commit comment {cid}: not `exam-commit: <sha>`", file=sys.stderr)
         elif c.get("updated_at") != c.get("created_at"):
-            raise ValueError(f"the first exam-commit marker (comment {cid}) was edited")
+            raise ValueError(f"exam-commit marker (comment {cid}) was edited")
         else:
-            chosen = str(c.get("first", "")).removeprefix("exam-commit:").strip()
-    return chosen
+            chain.append(m.group(1))
+    return chain
 
 
 def main(text: str) -> int:
     try:
-        comments = [json.loads(line) for line in text.splitlines() if line.strip()]
-        sha = pick(comments)
+        comments = [json.loads(line) for line in text.split("\n") if line.strip()]
+        chain = pick(comments)
     except (ValueError, AttributeError) as e:
         print(f"FAIL: {e}", file=sys.stderr)
         return 1
-    if sha is not None:
+    for sha in chain:
         print(sha)
     return 0
 
